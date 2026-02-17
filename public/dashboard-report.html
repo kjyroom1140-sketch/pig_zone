@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>보고서 관리 - 양돈농장 관리 시스템</title>
+    <link rel="stylesheet" href="/css/admin.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+
+<body data-dashboard-page="report">
+    <div id="dashboard-header-nav-placeholder"></div>
+
+    <main class="main-content dashboard-main">
+        <div class="page-header dashboard-page-header">
+            <h2 class="dashboard-title">보고서 관리</h2>
+        </div>
+        <p class="dashboard-desc">보고서/통계 기능이 준비 중입니다.</p>
+        <p class="dashboard-links-wrap">
+            <a href="/dashboard.html" id="linkToMonitoring" class="dashboard-link-farm">실시간 모니터링</a>으로 돌아가거나
+            <a href="/farm_admin.html" id="linkFarmAdmin2" class="dashboard-link-farm">농장 환경 설정</a>에서 시설을 관리할 수 있습니다.
+        </p>
+    </main>
+
+    <script src="/js/dashboard-common.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var farmId = window.dashboardFarmId || new URLSearchParams(window.location.search).get('farmId');
+            var q = farmId ? '?farmId=' + encodeURIComponent(farmId) : '';
+            var a1 = document.getElementById('linkToMonitoring');
+            var a2 = document.getElementById('linkFarmAdmin2');
+            if (a1) a1.href = '/dashboard.html' + q;
+            if (a2) a2.href = '/farm_admin.html' + q;
+        });
+    </script>
+</body>
+
+</html>

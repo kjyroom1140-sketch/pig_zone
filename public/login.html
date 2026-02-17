@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로그인 - 양돈농장 관리 시스템</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body class="auth-page">
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="logo">
+                    <span class="logo-icon">🐷</span>
+                    <h1>양돈농장 관리 시스템</h1>
+                </div>
+                <p class="subtitle">Pig Farm Management System</p>
+            </div>
+
+            <!-- 로그인 폼 -->
+            <form id="loginForm" class="auth-form active">
+                <div class="form-group">
+                    <label for="loginUsername">사용자명</label>
+                    <input type="text" id="loginUsername" name="username" required placeholder="사용자명을 입력하세요" autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label for="loginPassword">비밀번호</label>
+                    <input type="password" id="loginPassword" name="password" required placeholder="비밀번호를 입력하세요">
+                </div>
+
+                <div class="form-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="rememberMe">
+                        <span>로그인 상태 유지</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">
+                    로그인
+                </button>
+
+                <div id="loginMessage" class="message"></div>
+            </form>
+
+            <div class="auth-info">
+                <p class="info-text">
+                    <strong>💡 안내</strong><br>
+                    계정이 없으신가요? 최고 관리자에게 문의하여 계정을 발급받으세요.
+                </p>
+            </div>
+        </div>
+
+        <div class="auth-footer">
+            <p>&copy; 2026 Pig Farm Management System. All rights reserved.</p>
+        </div>
+    </div>
+
+    <script src="/js/login.js"></script>
+</body>
+
+</html>
