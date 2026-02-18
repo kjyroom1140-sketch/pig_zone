@@ -74,10 +74,10 @@ const FarmSection = sequelize.define('FarmSection', {
         allowNull: true,
         comment: '입식일'
     },
-    daysOld: {
-        type: DataTypes.INTEGER,
+    birthDate: {
+        type: DataTypes.DATEONLY,
         allowNull: true,
-        comment: '일령 (days)'
+        comment: '출생일'
     },
     breedType: {
         type: DataTypes.STRING(100),

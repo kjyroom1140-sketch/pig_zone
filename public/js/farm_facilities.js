@@ -268,7 +268,7 @@
         // 칸 정보 표시
         const pigInfo = section.currentPigCount ? `${section.currentPigCount}두` : '비어있음';
         const weightInfo = section.averageWeight ? `, ${section.averageWeight}kg` : '';
-        const daysInfo = section.daysOld ? `, ${section.daysOld}일령` : '';
+        const birthInfo = section.birthDate ? `, 출생일 ${section.birthDate}` : '';
 
         let html = `
         <div class="tree-node section-node" data-id="${section.id}" data-type="section">
@@ -276,7 +276,7 @@
                 <span class="tree-toggle-placeholder"></span>
                 <span class="tree-icon">📍</span>
                 <span class="tree-label">${escapeHtml(section.name)}</span>
-                <span class="tree-stats">(${pigInfo}${weightInfo}${daysInfo})</span>
+                <span class="tree-stats">(${pigInfo}${weightInfo}${birthInfo})</span>
                 <div class="tree-actions">
                     <button class="btn-icon" data-action="editSection" data-id="${escapeHtml(section.id)}" title="사육정보 수정">✏️</button>
                 </div>
@@ -900,7 +900,7 @@
 
     // 칸 수정 모달 (임시 구현 - 향후 확장 가능)
     function showEditSectionModal(sectionId) {
-        alert(`칸 ID: ${sectionId}\n\n칸별 사육 정보 수정 기능은 향후 추가될 예정입니다.\n(두수, 평균체중, 입주일, 일령 등)`);
+        alert(`칸 ID: ${sectionId}\n\n칸별 사육 정보 수정 기능은 향후 추가될 예정입니다.\n(두수, 평균체중, 입주일, 출생일 등)`);
     }
 
     // ========================================

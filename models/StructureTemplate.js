@@ -28,6 +28,12 @@ const StructureTemplate = sequelize.define('StructureTemplate', {
         allowNull: true,
         comment: '두수당 적정 면적 (m²/head) - 사육시설인 경우 사용'
     },
+    // 5. 일령 (사육시설)
+    ageLabel: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        comment: '일령 표시 (예: 0~28, 29~70, 71~120, 출하시) - 사육시설인 경우 사용'
+    },
 
     // 부가 설명
     description: {

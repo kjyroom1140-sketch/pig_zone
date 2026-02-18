@@ -81,7 +81,7 @@ router.get('/:farmId/pig-groups', isAuthenticated, checkFarmPermission, async (r
         const { farmId } = req.params;
         const groups = await PigGroup.findAll({
             where: { farmId, status: 'active' },
-            attributes: ['id', 'groupNo', 'entryDate', 'headcount', 'currentSectionId', 'memo'],
+            attributes: ['id', 'groupNo', 'entryDate', 'headcount', 'currentSectionId'],
             order: [['createdAt', 'DESC']],
             raw: true
         });
@@ -118,7 +118,7 @@ router.post('/:farmId/schedule-items', isAuthenticated, checkFarmPermission, asy
     const transaction = await sequelize.transaction();
     try {
         const { farmId } = req.params;
-        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, description, sortOrder, isActive } = req.body;
+        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, sortOrder, isActive } = req.body;
         const recurrence = parseRecurrence(req.body);
         const insertOrder = sortOrder != null ? parseInt(sortOrder, 10) : 0;
 
@@ -137,7 +137,6 @@ router.post('/:farmId/schedule-items', isAuthenticated, checkFarmPermission, asy
             dayMin: dayMin != null ? parseInt(dayMin, 10) : null,
             dayMax: dayMax != null ? parseInt(dayMax, 10) : null,
             taskTypeId,
-            description: description || null,
             sortOrder: insertOrder,
             isActive: isActive !== false,
             ...recurrence
@@ -156,7 +155,7 @@ router.post('/:farmId/schedule-items', isAuthenticated, checkFarmPermission, asy
 router.put('/:farmId/schedule-items/:id', isAuthenticated, checkFarmPermission, async (req, res) => {
     try {
         const { farmId, id } = req.params;
-        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, description, sortOrder, isActive } = req.body;
+        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, sortOrder, isActive } = req.body;
 
         const row = await FarmScheduleItem.findOne({ where: { id, farmId } });
         if (!row) return res.status(404).json({ error: '농장 일정 항목을 찾을 수 없습니다.' });
@@ -170,7 +169,6 @@ router.put('/:farmId/schedule-items/:id', isAuthenticated, checkFarmPermission, 
             dayMin: dayMin != null ? parseInt(dayMin, 10) : null,
             dayMax: dayMax != null ? parseInt(dayMax, 10) : null,
             taskTypeId: taskTypeId ?? row.taskTypeId,
-            description: description ?? row.description,
             sortOrder: sortOrder != null ? parseInt(sortOrder, 10) : row.sortOrder,
             isActive: isActive !== false,
             ...recurrence
@@ -325,8 +323,7 @@ router.post('/:farmId/schedule-work-plans', isAuthenticated, checkFarmPermission
                 entryDate: String(completedDate).trim(),
                 headcount: entryCountNum,
                 status: 'active',
-                breedType: breedTypeVal,
-                memo: entrySource ? String(entrySource).trim() : null
+                breedType: breedTypeVal
             });
             const movedAt = new Date(String(completedDate).trim() + 'T12:00:00');
             await PigMovement.create({

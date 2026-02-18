@@ -1,62 +1,43 @@
+/**
+ * 전역 일정 항목 (schedule_items)
+ * docs: schedule_structure_design.md — 구분·대상장소·기준·작업유형(세부) + 일수·반복
+ */
 const express = require('express');
 const router = express.Router();
-const { ScheduleItem, StructureTemplate, ScheduleTaskType, ScheduleBasisType } = require('../models');
-const { expandRecurrence } = require('../utils/recurrence');
+const {
+    ScheduleItem,
+    ScheduleDivision,
+    StructureTemplate,
+    ScheduleBase,
+    ScheduleWorkDetailType,
+    ScheduleWorkType
+} = require('../models');
+
+const defaultInclude = [
+    { model: ScheduleDivision, as: 'division', attributes: ['id', 'code', 'name'] },
+    { model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name', 'category'] },
+    { model: ScheduleBase, as: 'basis', attributes: ['id', 'name'] },
+    { model: ScheduleWorkDetailType, as: 'workDetailType', attributes: ['id', 'code', 'name'], include: [{ model: ScheduleWorkType, as: 'workType', attributes: ['id', 'code', 'name', 'appliesToScope', 'divisionId'] }] }
+];
 
 router.get('/', async (req, res) => {
     try {
-        const { targetType, structureTemplateId, taskTypeId, basisTypeId } = req.query;
+        const { divisionId, structureTemplateId, basisId, workDetailTypeId } = req.query;
         const where = {};
-        if (targetType) where.targetType = targetType;
-        if (structureTemplateId) where.structureTemplateId = structureTemplateId;
-        if (taskTypeId) where.taskTypeId = taskTypeId;
-        if (basisTypeId) where.basisTypeId = basisTypeId;
+        if (divisionId != null && divisionId !== '') where.divisionId = divisionId;
+        if (structureTemplateId != null && structureTemplateId !== '') where.structureTemplateId = structureTemplateId;
+        if (basisId != null && basisId !== '') where.basisId = basisId;
+        if (workDetailTypeId != null && workDetailTypeId !== '') where.workDetailTypeId = workDetailTypeId;
 
         const list = await ScheduleItem.findAll({
             where,
-            include: [
-                { model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name', 'category'] },
-                { model: ScheduleTaskType, as: 'taskType', attributes: ['id', 'code', 'name'] },
-                { model: ScheduleBasisType, as: 'basisTypeRef', attributes: ['id', 'code', 'name'] }
-            ],
+            include: defaultInclude,
             order: [['sortOrder', 'ASC'], ['id', 'ASC']]
         });
         res.json(list);
     } catch (error) {
         console.error('일정 항목 조회 오류:', error);
         res.status(500).json({ error: error.message || '일정 항목 목록을 불러오는 중 오류가 발생했습니다.' });
-    }
-});
-
-// 기간별 발생 목록 (반복 일정 확장). ?start=YYYY-MM-DD&end=YYYY-MM-DD
-router.get('/occurrences', async (req, res) => {
-    try {
-        const { start: startStr, end: endStr } = req.query;
-        const start = startStr ? new Date(startStr) : new Date();
-        const end = endStr ? new Date(endStr) : new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-        if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
-            return res.status(400).json({ error: 'start, end는 YYYY-MM-DD 형식이어야 합니다.' });
-        }
-        const items = await ScheduleItem.findAll({
-            where: { isActive: true },
-            include: [
-                { model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name'] },
-                { model: ScheduleTaskType, as: 'taskType', attributes: ['id', 'name'] }
-            ],
-            order: [['sortOrder', 'ASC'], ['id', 'ASC']]
-        });
-        const occurrences = [];
-        for (const item of items) {
-            const list = expandRecurrence(item.toJSON(), start, end);
-            for (const o of list) {
-                occurrences.push({ ...o, id: `occ-${item.id}-${o.date}` });
-            }
-        }
-        occurrences.sort((a, b) => a.date.localeCompare(b.date) || a.scheduleItemId - b.scheduleItemId);
-        res.json({ occurrences });
-    } catch (error) {
-        console.error('occurrences 조회 오류:', error);
-        res.status(500).json({ error: '기간별 일정을 불러오는 중 오류가 발생했습니다.' });
     }
 });
 
@@ -67,35 +48,38 @@ function parseRecurrence(body) {
         recurrenceInterval: recurrenceType && body.recurrenceInterval != null ? parseInt(body.recurrenceInterval, 10) : null,
         recurrenceWeekdays: recurrenceType && body.recurrenceWeekdays != null ? String(body.recurrenceWeekdays).trim() || null : null,
         recurrenceMonthDay: recurrenceType && body.recurrenceMonthDay !== '' && body.recurrenceMonthDay != null ? parseInt(body.recurrenceMonthDay, 10) : null,
-        recurrenceStartDate: null,
-        recurrenceEndDate: null
+        recurrenceStartDate: (body.recurrenceStartDate || '').trim() || null,
+        recurrenceEndDate: (body.recurrenceEndDate || '').trim() || null
     };
 }
 
 router.post('/', async (req, res) => {
     try {
-        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, description, sortOrder, isActive } = req.body;
+        const {
+            divisionId,
+            structureTemplateId,
+            basisId,
+            workDetailTypeId,
+            dayMin,
+            dayMax,
+            sortOrder,
+            isActive,
+            appliesToAllStructures
+        } = req.body;
         const recurrence = parseRecurrence(req.body);
         const created = await ScheduleItem.create({
-            targetType: targetType || 'pig',
+            divisionId,
             structureTemplateId: structureTemplateId || null,
-            basisTypeId: basisTypeId || null,
-            ageLabel: ageLabel != null && String(ageLabel).trim() !== '' ? String(ageLabel).trim() : null,
+            basisId,
+            workDetailTypeId,
             dayMin: dayMin != null ? parseInt(dayMin, 10) : null,
             dayMax: dayMax != null ? parseInt(dayMax, 10) : null,
-            taskTypeId,
-            description: description || null,
             sortOrder: sortOrder != null ? parseInt(sortOrder, 10) : 0,
             isActive: isActive !== false,
+            appliesToAllStructures: appliesToAllStructures === true || appliesToAllStructures === 'true',
             ...recurrence
         });
-        const withInclude = await ScheduleItem.findByPk(created.id, {
-            include: [
-                { model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name', 'category'] },
-                { model: ScheduleTaskType, as: 'taskType', attributes: ['id', 'code', 'name'] },
-                { model: ScheduleBasisType, as: 'basisTypeRef', attributes: ['id', 'code', 'name'] }
-            ]
-        });
+        const withInclude = await ScheduleItem.findByPk(created.id, { include: defaultInclude });
         res.status(201).json(withInclude);
     } catch (error) {
         console.error('일정 항목 추가 오류:', error);
@@ -105,31 +89,33 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
     try {
-        const { id } = req.params;
-        const { targetType, structureTemplateId, basisTypeId, ageLabel, dayMin, dayMax, taskTypeId, description, sortOrder, isActive } = req.body;
-        const row = await ScheduleItem.findByPk(id);
+        const row = await ScheduleItem.findByPk(req.params.id);
         if (!row) return res.status(404).json({ error: '일정 항목을 찾을 수 없습니다.' });
+        const {
+            divisionId,
+            structureTemplateId,
+            basisId,
+            workDetailTypeId,
+            dayMin,
+            dayMax,
+            sortOrder,
+            isActive,
+            appliesToAllStructures
+        } = req.body;
         const recurrence = parseRecurrence(req.body);
         await row.update({
-            targetType: targetType ?? row.targetType,
-            structureTemplateId: structureTemplateId || null,
-            basisTypeId: basisTypeId || null,
-            ageLabel: ageLabel != null && String(ageLabel).trim() !== '' ? String(ageLabel).trim() : null,
-            dayMin: dayMin != null ? parseInt(dayMin, 10) : null,
-            dayMax: dayMax != null ? parseInt(dayMax, 10) : null,
-            taskTypeId: taskTypeId ?? row.taskTypeId,
-            description: description ?? row.description,
+            divisionId: divisionId ?? row.divisionId,
+            structureTemplateId: structureTemplateId !== undefined ? (structureTemplateId || null) : row.structureTemplateId,
+            basisId: basisId ?? row.basisId,
+            workDetailTypeId: workDetailTypeId ?? row.workDetailTypeId,
+            dayMin: dayMin != null ? parseInt(dayMin, 10) : row.dayMin,
+            dayMax: dayMax != null ? parseInt(dayMax, 10) : row.dayMax,
             sortOrder: sortOrder != null ? parseInt(sortOrder, 10) : row.sortOrder,
             isActive: isActive !== false,
+            appliesToAllStructures: appliesToAllStructures !== undefined ? (appliesToAllStructures === true || appliesToAllStructures === 'true') : row.appliesToAllStructures,
             ...recurrence
         });
-        const withInclude = await ScheduleItem.findByPk(id, {
-            include: [
-                { model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name', 'category'] },
-                { model: ScheduleTaskType, as: 'taskType', attributes: ['id', 'code', 'name'] },
-                { model: ScheduleBasisType, as: 'basisTypeRef', attributes: ['id', 'code', 'name'] }
-            ]
-        });
+        const withInclude = await ScheduleItem.findByPk(row.id, { include: defaultInclude });
         res.json(withInclude);
     } catch (error) {
         console.error('일정 항목 수정 오류:', error);
@@ -139,8 +125,7 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
     try {
-        const { id } = req.params;
-        const row = await ScheduleItem.findByPk(id);
+        const row = await ScheduleItem.findByPk(req.params.id);
         if (!row) return res.status(404).json({ error: '일정 항목을 찾을 수 없습니다.' });
         await row.destroy();
         res.json({ message: '삭제되었습니다.' });

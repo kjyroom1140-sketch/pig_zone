@@ -3,7 +3,7 @@ const session = require('express-session');
 const path = require('path');
 require('dotenv').config();
 
-const { testConnection, syncDatabase } = require('./config/database');
+const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const farmsRoutes = require('./routes/farms');
@@ -44,9 +44,16 @@ app.use('/api/diseaseCodes', require('./routes/diseaseCodes'));
 const structureTemplatesRouter = require('./routes/structureTemplates');
 app.post('/api/structureTemplates/reorder', structureTemplatesRouter.handleReorder);
 app.use('/api/structureTemplates', structureTemplatesRouter);
-app.use('/api/scheduleTaskTypes', require('./routes/scheduleTaskTypes'));
-app.use('/api/scheduleBasisTypes', require('./routes/scheduleBasisTypes'));
+app.use('/api/schedule-divisions', require('./routes/scheduleDivisions'));
+app.use('/api/schedule-bases', require('./routes/scheduleBases'));
+app.use('/api/schedule-work-types', require('./routes/scheduleWorkTypes'));
+app.use('/api/schedule-work-detail-types', require('./routes/scheduleWorkDetailTypes'));
+app.use('/api/schedule-division-structures', require('./routes/scheduleDivisionStructures'));
+app.use('/api/schedule-sortations', require('./routes/scheduleSortations'));
+app.use('/api/schedule-criterias', require('./routes/scheduleCriterias'));
+app.use('/api/schedule-jobtypes', require('./routes/scheduleJobtypes'));
 app.use('/api/scheduleItems', require('./routes/scheduleItems'));
+app.use('/api/schedule-work-plans', require('./routes/scheduleWorkPlans'));
 app.use('/api/roles', require('./routes/roles'));
 app.use('/api/farm-structure', require('./routes/farmStructure'));
 app.use('/api/farm-facilities', require('./routes/farmFacilities')); // 새로운 농장 시설 관리 API
@@ -87,8 +94,8 @@ async function startServer() {
             process.exit(1);
         }
 
-        // 데이터베이스 동기화
-        await syncDatabase();
+        // 테이블 자동 생성(sync) 비활성화 — 삭제된 테이블이 서버 기동 시 다시 생성되지 않음.
+        // 테이블 생성이 필요하면 scripts 또는 config/database에서 sync를 수동 실행.
 
         // 서버 시작
         app.listen(PORT, () => {

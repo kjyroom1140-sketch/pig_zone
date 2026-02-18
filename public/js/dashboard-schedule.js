@@ -247,12 +247,17 @@
         function addSection(section, level, parentBarnTemplateId, room, pathPrefix) {
             pathPrefix = pathPrefix || '';
             var pigInfo = (section.currentPigCount != null && section.currentPigCount > 0) ? section.currentPigCount + '두' : '0두';
-            var extra = [section.averageWeight ? section.averageWeight + 'kg' : '', section.daysOld ? section.daysOld + '일령' : ''].filter(Boolean).join(', ');
+            var extra = [section.averageWeight ? section.averageWeight + 'kg' : '', section.birthDate ? '출생일 ' + section.birthDate : ''].filter(Boolean).join(', ');
             var sectionHasPigs = (section.currentPigCount != null && section.currentPigCount > 0);
             var pathLabel = pathPrefix ? pathPrefix + ' · ' + (section.name || '칸') : (section.name || '칸');
             var sectionEmpty = !sectionHasPigs;
-            var sectionDaysOld = section.daysOld != null ? parseInt(section.daysOld, 10) : null;
-            if (isNaN(sectionDaysOld)) sectionDaysOld = null;
+            var sectionBirthDate = section.birthDate != null && section.birthDate !== '' ? section.birthDate : null;
+            var sectionDaysOld = null;
+            if (sectionBirthDate) {
+                var refDate = section.entryDate && section.entryDate.trim() ? new Date(section.entryDate.trim()) : new Date();
+                sectionDaysOld = Math.floor((refDate - new Date(sectionBirthDate)) / (24 * 60 * 60 * 1000));
+                if (isNaN(sectionDaysOld) || sectionDaysOld < 0) sectionDaysOld = null;
+            }
             rows.push({
                 level: level,
                 type: 'section',

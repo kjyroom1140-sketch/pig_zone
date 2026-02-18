@@ -21,12 +21,11 @@ async function run() {
                 group_no VARCHAR(30),
                 current_section_id UUID REFERENCES farm_sections(id),
                 entry_date DATE,
-                days_old INTEGER,
+                birth_date DATE,
                 breed_type VARCHAR(50),
                 headcount INTEGER,
                 status VARCHAR(30),
                 parent_group_id UUID REFERENCES pig_groups(id),
-                memo TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             );
@@ -36,12 +35,11 @@ async function run() {
             COMMENT ON COLUMN pig_groups.group_no IS '돈군 번호(사람이 보는 식별자). 생성 일시 기반';
             COMMENT ON COLUMN pig_groups.current_section_id IS 'FK → farm_sections.id. 현재 있는 칸(주된 위치)';
             COMMENT ON COLUMN pig_groups.entry_date IS '입식/전입일';
-            COMMENT ON COLUMN pig_groups.days_old IS '일령 (계산 또는 입력)';
+            COMMENT ON COLUMN pig_groups.birth_date IS '출생일';
             COMMENT ON COLUMN pig_groups.breed_type IS '대표 품종';
             COMMENT ON COLUMN pig_groups.headcount IS '두수 (객체 테이블 사용 시 COUNT로 보정 가능)';
             COMMENT ON COLUMN pig_groups.status IS 'active, split, merged, closed 등';
             COMMENT ON COLUMN pig_groups.parent_group_id IS 'FK → pig_groups.id. 분할 시 원래 돈군 참조';
-            COMMENT ON COLUMN pig_groups.memo IS '비고';
             COMMENT ON COLUMN pig_groups.created_at IS '돈군 번호(group_no) 생성에 사용';
             COMMENT ON COLUMN pig_groups.updated_at IS '수정 일시';
         `);
@@ -61,7 +59,6 @@ async function run() {
                 birth_date DATE,
                 entry_date DATE,
                 status VARCHAR(30),
-                memo TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             );
@@ -77,7 +74,6 @@ async function run() {
             COMMENT ON COLUMN pigs.birth_date IS '출생일';
             COMMENT ON COLUMN pigs.entry_date IS '전입/입식일';
             COMMENT ON COLUMN pigs.status IS '상태 (사육중, 출하, 폐사 등)';
-            COMMENT ON COLUMN pigs.memo IS '비고';
             COMMENT ON COLUMN pigs.created_at IS '생성 일시';
             COMMENT ON COLUMN pigs.updated_at IS '수정 일시';
         `);

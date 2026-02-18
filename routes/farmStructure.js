@@ -9,9 +9,10 @@ const {
     FarmScheduleItem,
     FarmScheduleTaskType,
     FarmScheduleBasisType,
-    ScheduleTaskType,
-    ScheduleBasisType,
-    ScheduleTaskTypeStructure,
+    ScheduleWorkType,
+    ScheduleWorkDetailType,
+    ScheduleBase,
+    ScheduleDivision,
     FarmScheduleTaskTypeStructure
 } = require('../models');
 const { sequelize } = require('../config/database');
@@ -123,29 +124,29 @@ router.post('/:farmId/production', isAuthenticated, checkFarmPermission, async (
             transaction
         });
 
-        // 1) 농장 전용 작업 유형: 전역 schedule_task_types → farm_schedule_task_types 복사
+        // 1) 농장 전용 작업 유형: 전역 schedule_work_detail_types → farm_schedule_task_types 복사 (originalId = 세부유형 id)
         await FarmScheduleTaskType.destroy({ where: { farmId }, transaction });
-        const globalTaskTypes = await ScheduleTaskType.findAll({
-            order: [['sortOrder', 'ASC'], ['id', 'ASC']],
+        const globalDetailTypes = await ScheduleWorkDetailType.findAll({
+            include: [{ model: ScheduleWorkType, as: 'workType', attributes: ['id', 'code', 'name'] }],
+            order: [['workTypeId', 'ASC'], ['sortOrder', 'ASC'], ['id', 'ASC']],
             transaction
         });
-        if (globalTaskTypes.length > 0) {
-            const farmTaskRows = globalTaskTypes.map((t, i) => ({
+        if (globalDetailTypes.length > 0) {
+            const farmTaskRows = globalDetailTypes.map((d, i) => ({
                 farmId,
-                originalId: t.id,
-                code: t.code,
-                name: t.name,
-                category: t.category,
-                description: t.description,
+                originalId: d.id,
+                code: d.code || (d.workType && d.workType.code),
+                name: d.name,
+                category: d.workType ? d.workType.name : null,
                 sortOrder: i,
-                appliesToAllStructures: t.appliesToAllStructures !== false
+                appliesToAllStructures: true
             }));
             await FarmScheduleTaskType.bulkCreate(farmTaskRows, { transaction });
         }
 
-        // 2) 농장 전용 기준 유형: 전역 schedule_basis_types → farm_schedule_basis_types 복사
+        // 2) 농장 전용 기준 유형: 전역 schedule_bases → farm_schedule_basis_types 복사
         await FarmScheduleBasisType.destroy({ where: { farmId }, transaction });
-        const globalBasisTypes = await ScheduleBasisType.findAll({
+        const globalBasisTypes = await ScheduleBase.findAll({
             order: [['sortOrder', 'ASC'], ['id', 'ASC']],
             transaction
         });
@@ -153,10 +154,10 @@ router.post('/:farmId/production', isAuthenticated, checkFarmPermission, async (
             const farmBasisRows = globalBasisTypes.map((b, i) => ({
                 farmId,
                 originalId: b.id,
-                code: b.code,
+                code: null,
                 name: b.name,
-                targetType: b.targetType,
-                description: b.description,
+                targetType: null,
+                description: null,
                 sortOrder: i
             }));
             await FarmScheduleBasisType.bulkCreate(farmBasisRows, { transaction });
@@ -173,42 +174,42 @@ router.post('/:farmId/production', isAuthenticated, checkFarmPermission, async (
             order: [['sortOrder', 'ASC'], ['id', 'ASC']],
             transaction
         });
-        const taskIdMap = {}; // originalId -> farm_schedule_task_types.id
+        const taskIdMap = {}; // originalId(schedule_work_detail_types.id) -> farm_schedule_task_types.id
         farmTaskTypes.forEach(ft => { if (ft.originalId != null) taskIdMap[ft.originalId] = ft.id; });
-        const basisIdMap = {}; // originalId -> farm_schedule_basis_types.id
+        const basisIdMap = {}; // originalId(schedule_bases.id) -> farm_schedule_basis_types.id
         farmBasisTypes.forEach(fb => { if (fb.originalId != null) basisIdMap[fb.originalId] = fb.id; });
 
-        // 3-1) schedule_task_type_structures → farm_schedule_task_type_structures 복사 (originalId → farm task type id 매핑)
-        const globalScopes = await ScheduleTaskTypeStructure.findAll({ transaction });
-        if (globalScopes.length > 0) {
-            const farmScopeRows = globalScopes
-                .filter(s => taskIdMap[s.scheduleTaskTypeId] != null)
-                .map(s => ({ farmScheduleTaskTypeId: taskIdMap[s.scheduleTaskTypeId], structureTemplateId: s.structureTemplateId }));
-            if (farmScopeRows.length > 0) {
-                await FarmScheduleTaskTypeStructure.bulkCreate(farmScopeRows, { transaction });
-            }
+        // 3-1) 전역에는 schedule_division_structures만 있음. 농장 작업유형-장소 스코프는 비워 두거나 별도 설정. (필요 시 추후 구현)
+        const farmTaskIds = farmTaskTypes.map(ft => ft.id);
+        if (farmTaskIds.length > 0) {
+            await FarmScheduleTaskTypeStructure.destroy({
+                where: { farmScheduleTaskTypeId: { [Op.in]: farmTaskIds } },
+                transaction
+            });
         }
 
-        // 4) 선택 시설에 해당하는 schedule_items → farm_schedule_items 복사 (task/basis는 농장 전용 id로 매핑)
+        // 4) 선택 시설에 해당하는 schedule_items → farm_schedule_items 복사 (workDetailTypeId→taskTypeId, basisId→basisTypeId, division→targetType)
         if (templateIds.length > 0) {
             const sourceItems = await ScheduleItem.findAll({
                 where: {
                     structureTemplateId: { [Op.in]: templateIds }
                 },
+                include: [{ model: ScheduleDivision, as: 'division', attributes: ['id', 'code'] }],
                 order: [['sortOrder', 'ASC'], ['id', 'ASC']],
                 transaction
             });
 
             if (sourceItems.length > 0) {
                 const farmItems = sourceItems.map((item, index) => {
-                    const mappedTaskId = item.taskTypeId != null ? taskIdMap[item.taskTypeId] : null;
-                    const mappedBasisId = item.basisTypeId != null ? basisIdMap[item.basisTypeId] : null;
+                    const mappedTaskId = item.workDetailTypeId != null ? taskIdMap[item.workDetailTypeId] : null;
+                    const mappedBasisId = item.basisId != null ? basisIdMap[item.basisId] : null;
+                    const targetType = item.division && item.division.code === 'facility' ? 'facility' : 'pig';
                     return {
                         farmId,
-                        targetType: item.targetType,
+                        targetType,
                         structureTemplateId: item.structureTemplateId,
                         basisTypeId: mappedBasisId,
-                        ageLabel: item.ageLabel,
+                        ageLabel: null,
                         dayMin: item.dayMin,
                         dayMax: item.dayMax,
                         taskTypeId: mappedTaskId != null ? mappedTaskId : (farmTaskTypes[0] ? farmTaskTypes[0].id : null),

@@ -18,9 +18,9 @@ const FarmScheduleBasisType = sequelize.define('FarmScheduleBasisType', {
     originalId: {
         type: DataTypes.INTEGER,
         allowNull: true,
-        references: { model: 'schedule_basis_types', key: 'id' },
+        references: { model: 'schedule_bases', key: 'id' },
         onDelete: 'SET NULL',
-        comment: '복사 원본(전역 schedule_basis_types.id), 농장에서 추가한 항목은 null'
+        comment: '복사 원본(전역 기준), 농장에서 추가한 항목은 null'
     },
     code: {
         type: DataTypes.STRING(50),

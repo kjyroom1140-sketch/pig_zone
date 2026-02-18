@@ -18,9 +18,9 @@ const FarmScheduleTaskType = sequelize.define('FarmScheduleTaskType', {
     originalId: {
         type: DataTypes.INTEGER,
         allowNull: true,
-        references: { model: 'schedule_task_types', key: 'id' },
+        references: { model: 'schedule_work_detail_types', key: 'id' },
         onDelete: 'SET NULL',
-        comment: '복사 원본(전역 schedule_task_types.id), 농장에서 추가한 항목은 null'
+        comment: '복사 원본(전역 세부 작업유형), 농장에서 추가한 항목은 null'
     },
     code: {
         type: DataTypes.STRING(50),

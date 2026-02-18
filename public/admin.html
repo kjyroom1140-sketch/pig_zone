@@ -32,15 +32,6 @@
                     <span class="icon">📊</span>
                     <span>대시보드</span>
                 </button>
-                <button type="button" class="nav-item" data-section="database">
-                    <span class="icon">🗄️</span>
-                    <span>데이터베이스 구조</span>
-                </button>
-                <!-- 테이블 목록 서브 메뉴 -->
-                <div id="navTableList" class="nav-sub-menu">
-                    <!-- JS로 채워짐 -->
-                </div>
-
                 <button type="button" class="nav-item" data-section="users">
                     <span class="icon">👥</span>
                     <span>회원 관리</span>
@@ -72,6 +63,7 @@
                     <div class="nav-sub-item" onclick="showSettingsTab('structure', this)" style="cursor: pointer;">농장
                         구조 템플릿</div>
                     <div class="nav-sub-item" onclick="showSettingsTab('schedule', this)" style="cursor: pointer;">일정 관리 설정</div>
+                    <div class="nav-sub-item" onclick="showSettingsTab('scheduleMasters', this)" style="cursor: pointer;">일정 마스터 관리</div>
                 </div>
             </nav>
         </aside>
@@ -105,33 +97,10 @@
                 <div class="info-box">
                     <h3>🎯 빠른 시작 가이드</h3>
                     <ol>
-                        <li><strong>데이터베이스 구조</strong> - 좌측 메뉴에서 테이블을 선택하여 상세 정보를 확인하세요</li>
                         <li><strong>회원 관리</strong> - 시스템 사용자를 관리하고 권한을 설정하세요</li>
                         <li><strong>농장 관리</strong> - 등록된 농장을 확인하고 관리하세요</li>
                         <li><strong>시스템 설정</strong> - 양돈농장 관리를 위한 초기 설정을 구성하세요</li>
                     </ol>
-                </div>
-            </section>
-
-            <!-- 데이터베이스 구조 섹션 -->
-            <section id="database" class="content-section">
-                <div class="section-header">
-                    <div>
-                        <h2>🗄️ 데이터베이스 구조</h2>
-                        <p>선택한 테이블의 상세 정보를 확인하세요</p>
-                    </div>
-                </div>
-
-                <!-- 테이블 상세 정보 (전폭 사용) -->
-                <div class="table-detail-full">
-                    <div class="table-detail-placeholder" id="tablePlaceholder">
-                        <div class="placeholder-icon">⬅️</div>
-                        <h3>테이블을 선택하세요</h3>
-                        <p>좌측 메뉴에서 테이블을 선택하면 상세 정보가 여기에 표시됩니다.</p>
-                    </div>
-                    <div class="table-detail-info" id="tableDetailInfo" style="display: none;">
-                        <!-- 테이블 상세 정보가 여기에 표시됨 -->
-                    </div>
                 </div>
             </section>
 
@@ -449,15 +418,16 @@
                                             <thead>
                                                 <tr>
                                                     <th width="60" class="text-center">순서</th>
-                                                    <th width="25%">시설명</th>
-                                                    <th width="20%">체중/상태</th>
-                                                    <th width="20%">적정 밀사율 (㎡/두)</th>
-                                                    <th width="35%">설명</th>
+                                                    <th width="20%">시설명</th>
+                                                    <th width="12%">일령</th>
+                                                    <th width="16%">체중/상태</th>
+                                                    <th width="14%">적정 밀사율 (㎡/두)</th>
+                                                    <th width="38%">설명</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="structureTemplatesProductionBody">
                                                 <tr>
-                                                    <td colspan="5" class="loading">데이터를 불러오는 중...</td>
+                                                    <td colspan="6" class="loading">데이터를 불러오는 중...</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -500,33 +470,27 @@
                     <div class="settings-grid schedule-types-grid">
                         <div id="scheduleItemsSection" class="settings-card" style="grid-column: 1 / -1;">
                             <h3>📅 일정 항목</h3>
-                            <p class="text-muted">구분(돼지/시설), 대상장소, 기준, 날짜(시작~끝), 작업유형, 작업내용으로 일정을 관리합니다. 시설 일정은 반복(매일/매주/매월) 설정이 가능합니다.</p>
+                            <p class="text-muted">구분(돼지/시설), 대상장소, 기준, 날짜(시작~끝), 작업 내용으로 일정을 관리합니다. 시설 일정은 반복(매일/매주/매월) 설정이 가능합니다.</p>
                             <p class="text-muted schedule-items-hint">행 클릭 시 수정됩니다.</p>
                             <div class="schedule-items-filter-row">
                                 <button type="button" class="btn btn-danger btn-sm schedule-filter-btn" onclick="deleteSelectedScheduleItems()">선택 삭제</button>
-                                <span class="schedule-filter-label">구분:</span>
-                                <select id="scheduleFilterTargetType" class="form-control schedule-filter-select">
-                                    <option value="">전체</option>
-                                    <option value="sow">모돈</option>
-                                    <option value="boar">옹돈</option>
-                                    <option value="non_breeding">비번식돈</option>
-                                    <option value="facility">시설</option>
-                                </select>
                                 <span class="schedule-filter-label">대상장소:</span>
                                 <select id="scheduleFilterStructure" class="form-control schedule-filter-select" style="min-width: 140px;">
                                     <option value="">전체</option>
                                 </select>
-                                <span class="schedule-filter-label">기준:</span>
-                                <select id="scheduleFilterBasisType" class="form-control schedule-filter-select" style="min-width: 100px;">
+                                <span class="schedule-filter-label">구분:</span>
+                                <select id="scheduleFilterDivisionId" class="form-control schedule-filter-select">
                                     <option value="">전체</option>
                                 </select>
-                                <span class="schedule-filter-label">작업유형:</span>
-                                <select id="scheduleFilterTaskType" class="form-control schedule-filter-select" style="min-width: 120px;">
+                                <span class="schedule-filter-label">기준:</span>
+                                <select id="scheduleFilterBasisId" class="form-control schedule-filter-select" style="min-width: 100px;">
+                                    <option value="">전체</option>
+                                </select>
+                                <span class="schedule-filter-label">작업 내용:</span>
+                                <select id="scheduleFilterWorkDetailTypeId" class="form-control schedule-filter-select" style="min-width: 120px;">
                                     <option value="">전체</option>
                                 </select>
                                 <button type="button" class="btn btn-secondary btn-sm schedule-filter-btn" onclick="loadScheduleItems()">조회</button>
-                                <button type="button" class="btn btn-outline-secondary btn-sm schedule-filter-btn schedule-type-modal-btn" onclick="openScheduleBasisTypesListModal()">기준 유형</button>
-                                <button type="button" class="btn btn-outline-secondary btn-sm schedule-filter-btn schedule-type-modal-btn" onclick="openScheduleTaskTypesListModal()">작업 유형</button>
                             </div>
                             <div class="table-container">
                                 <table class="data-table schedule-sortable-table">
@@ -535,21 +499,104 @@
                                             <th width="28"><input type="checkbox" id="scheduleItemCheckAll" title="전체 선택" onclick="toggleScheduleItemCheckAll(this)"></th>
                                             <th width="60">순서</th>
                                             <th width="28" title="드래그하여 순서 변경"></th>
-                                            <th width="84">구분</th>
                                             <th width="100">대상장소</th>
+                                            <th width="84">구분</th>
                                             <th width="100">기준</th>
-                                            <th width="80">일령</th>
-                                            <th width="70">날짜(시작)</th>
-                                            <th width="70">날짜(끝)</th>
-                                            <th width="80">반복간격</th>
+                                            <th width="70">일수(시작)</th>
+                                            <th width="70">일수(끝)</th>
+                                            <th width="80">반복</th>
                                             <th width="100">작업유형</th>
-                                            <th>작업내용</th>
+                                            <th>작업 내용</th>
                                         </tr>
                                     </thead>
                                     <tbody id="scheduleItemsBody">
-                                        <tr><td colspan="12" class="loading">데이터를 불러오는 중...</td></tr>
+                                        <tr><td colspan="11" class="loading">데이터를 불러오는 중...</td></tr>
                                     </tbody>
                                 </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 일정 마스터 관리: 작업유형 세부 테이블 중심 + 상위 분류 관리 -->
+                <div id="settings-scheduleMasters-content" class="settings-content" style="display: none;">
+                    <div class="settings-grid" style="grid-template-columns: 1fr;">
+                        <p class="text-muted" style="grid-column: 1 / -1;">일정 추가 시 사용하는 <strong>작업유형 세부</strong>를 중심으로 관리합니다. 아래 접이식에서 대분류·기준·장소별 구분을 추가·수정·삭제할 수 있습니다.</p>
+
+                        <!-- 작업유형 세부 (메인) -->
+                        <div class="settings-card schedule-master-card schedule-master-main">
+                            <h3>작업유형 세부</h3>
+                            <p class="text-muted small">대분류 아래 실제 작업명(분만사 이동, 교배 실시 등)을 등록합니다. 필터로 보기 조건을 줄일 수 있습니다.</p>
+                            <div class="form-inline schedule-master-filters" style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                                <label>대분류</label>
+                                <select id="scheduleMastersDetailWorkTypeFilter" class="form-control" style="min-width: 120px;">
+                                    <option value="">전체</option>
+                                </select>
+                                <label style="margin-left: 4px;">대상 장소</label>
+                                <select id="scheduleMastersDetailStructureFilter" class="form-control" style="min-width: 120px;">
+                                    <option value="">전체</option>
+                                </select>
+                                <label style="margin-left: 4px;">구분</label>
+                                <select id="scheduleMastersDetailDivisionFilter" class="form-control" style="min-width: 120px;">
+                                    <option value="">전체</option>
+                                </select>
+                                <button type="button" class="btn btn-primary btn-sm" onclick="openMasterWorkDetailAddModal()">+ 세부 추가</button>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr><th>대상 장소</th><th>구분</th><th>대분류</th><th>세부 이름</th><th>순서</th><th width="100">관리</th></tr>
+                                    </thead>
+                                    <tbody id="scheduleMastersWorkDetailBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 상위 분류 관리 (접이식) -->
+                        <div class="settings-card schedule-master-card schedule-master-upper">
+                            <h3 class="schedule-master-collapse-trigger" onclick="toggleScheduleMasterUpper()" style="cursor: pointer; user-select: none;">
+                                <span id="scheduleMasterUpperChevron">▼</span> 상위 분류 관리 (대분류 · 기준 · 장소별 구분)
+                            </h3>
+                            <div id="scheduleMasterUpperBody" style="display: none;">
+                                <p class="text-muted small" style="margin-bottom: 12px;">세부에 사용하는 대분류, 기준, 장소별 구분을 여기서 추가·수정·삭제합니다.</p>
+                                <div class="schedule-master-upper-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+                                    <!-- ① 대상 장소별 구분 -->
+                                    <div class="schedule-master-upper-block">
+                                        <h4>① 대상 장소별 구분</h4>
+                                        <p class="text-muted small">장소(시설)에 구분(모돈·자돈 등) 매핑</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="openDivisionStructureAddModal()">+ 매핑 추가</button>
+                                        <div class="table-container" style="margin-top: 8px; max-height: 200px; overflow: auto;">
+                                            <table class="data-table data-table-sm">
+                                                <thead><tr><th>장소</th><th>구분</th><th width="70">관리</th></tr></thead>
+                                                <tbody id="scheduleMastersDivisionStructureBody"></tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <!-- ② 기준 -->
+                                    <div class="schedule-master-upper-block">
+                                        <h4>② 기준</h4>
+                                        <p class="text-muted small">전입일, 교배일, 분만일 등</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="openMasterBasisAddModal()">+ 기준 추가</button>
+                                        <div class="table-container" style="margin-top: 8px; max-height: 200px; overflow: auto;">
+                                            <table class="data-table data-table-sm">
+                                                <thead><tr><th>이름</th><th>구분</th><th>설명</th><th width="70">관리</th></tr></thead>
+                                                <tbody id="scheduleMastersBasisBody"></tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <!-- ③ 작업유형 대분류 -->
+                                    <div class="schedule-master-upper-block">
+                                        <h4>③ 작업유형 대분류</h4>
+                                        <p class="text-muted small">이동, 사양, 번식 등</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="openMasterWorkTypeAddModal()">+ 대분류 추가</button>
+                                        <div class="table-container" style="margin-top: 8px; max-height: 200px; overflow: auto;">
+                                            <table class="data-table data-table-sm">
+                                                <thead><tr><th>이름</th><th>대상</th><th width="70">관리</th></tr></thead>
+                                                <tbody id="scheduleMastersWorkTypeBody"></tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1207,6 +1254,11 @@
                         <input type="text" id="newStructName" required placeholder="예: 분만사, 자돈사, 창고">
                     </div>
 
+                    <div id="newAgeLabelGroup" class="form-group">
+                        <label>일령</label>
+                        <input type="text" id="newStructAgeLabel" placeholder="예: 0~28, 29~70, 출하시" maxlength="50">
+                    </div>
+
                     <div id="newWeightGroup" class="form-group">
                         <label>체중/상태</label>
                         <input type="text" id="newStructWeight" placeholder="예: 1~7kg, 성돈 등">
@@ -1254,6 +1306,11 @@
                     <div class="form-group">
                         <label>시설명 (Name) *</label>
                         <input type="text" id="editStructName" required>
+                    </div>
+
+                    <div id="editAgeLabelGroup" class="form-group">
+                        <label>일령</label>
+                        <input type="text" id="editStructAgeLabel" placeholder="예: 0~28, 29~70, 출하시" maxlength="50">
                     </div>
 
                     <div id="editWeightGroup" class="form-group">
@@ -1426,9 +1483,9 @@
         </div>
     </div>
 
-    <!-- 일정 항목 추가/수정 모달 -->
+    <!-- 일정 항목 추가/수정 모달 (설계: 장소 → 구분 → 기준 → 작업유형 대분류→세부 → 일수·설명) -->
     <div id="scheduleItemModal" class="modal schedule-modal">
-        <div class="modal-content schedule-modal-content" style="max-width: 520px;">
+        <div class="modal-content schedule-modal-content" style="max-width: 540px;">
             <div class="modal-header">
                 <h3 id="scheduleItemModalTitle">일정 추가</h3>
                 <button class="modal-close" onclick="closeScheduleItemModal()">&times;</button>
@@ -1436,52 +1493,60 @@
             <div class="modal-body">
                 <form id="scheduleItemForm">
                     <input type="hidden" id="scheduleItemId">
+                    <!-- ① 장소 (전체 시설 = 모든 시설에 반복 적용) -->
+                    <div class="form-group">
+                        <label>대상장소 *</label>
+                        <select id="scheduleItemStructureTemplateId" required>
+                            <option value="">선택</option>
+                        </select>
+                    </div>
+                    <!-- ② 구분 (선택한 장소에 적용 가능한 구분만, 셀렉트 목록에 "➕ 구분 추가" 옵션) -->
                     <div class="form-group">
                         <label>구분 *</label>
-                        <select id="scheduleItemTargetType" required>
-                            <option value="sow">모돈</option>
-                            <option value="boar">옹돈</option>
-                            <option value="non_breeding">비번식돈</option>
-                            <option value="facility">시설</option>
+                        <select id="scheduleItemDivisionId" required>
+                            <option value="">장소를 먼저 선택하세요</option>
+                        </select>
+                    </div>
+                    <!-- ③ 기준 (셀렉트에서 "기준 추가" 선택 시 추가 모달) -->
+                    <div class="form-group">
+                        <label>기준 *</label>
+                        <select id="scheduleItemBasisId" required>
+                            <option value="">선택</option>
+                        </select>
+                    </div>
+                    <!-- 기준일로부터 일수 (기준 바로 아래) -->
+                    <div class="form-group" id="scheduleItemDayRangeGroup">
+                        <label>기준일로부터 일수</label>
+                        <div style="display: flex; gap: 12px;">
+                            <div style="flex: 1;">
+                                <input type="number" id="scheduleItemDayMin" placeholder="시작(0)" min="0">
+                            </div>
+                            <div style="flex: 1;">
+                                <input type="number" id="scheduleItemDayMax" placeholder="끝(7)" min="0">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- ④ 작업유형: 대분류 → 세부 -->
+                    <div class="form-group">
+                        <label>작업유형 *</label>
+                        <select id="scheduleItemWorkTypeId">
+                            <option value="">구분을 먼저 선택하세요</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>대상장소 (structure_templates)</label>
-                        <select id="scheduleItemStructureTemplateId">
-                            <option value="">선택 안 함</option>
+                        <label>작업내용 *</label>
+                        <select id="scheduleItemWorkDetailTypeId" required>
+                            <option value="">대분류를 먼저 선택하세요</option>
                         </select>
-                    </div>
-                    <div class="form-group" id="scheduleItemBasisGroup">
-                        <label>기준</label>
-                        <select id="scheduleItemBasisTypeId">
-                            <option value="">선택 안 함</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="scheduleItemAgeLabelGroup" style="display: none;">
-                        <label>일령</label>
-                        <input type="text" id="scheduleItemAgeLabel" placeholder="예: 0, 1~7, 21~28" maxlength="50">
-                    </div>
-                    <div class="form-group" id="scheduleItemDayRangeGroup" style="display: flex; gap: 12px;">
-                        <div style="flex: 1;">
-                            <label>날짜(시작) 일수</label>
-                            <input type="number" id="scheduleItemDayMin" placeholder="0" min="0">
-                        </div>
-                        <div style="flex: 1;">
-                            <label>날짜(끝) 일수</label>
-                            <input type="number" id="scheduleItemDayMax" placeholder="0" min="0">
-                        </div>
                     </div>
                     <div class="form-group" id="scheduleItemRecurrenceGroup" style="display: none;">
-                        <div id="scheduleItemRecurrenceTypeRow">
-                            <label>반복</label>
-                            <select id="scheduleItemRecurrenceType">
-                                <option value="">반복 없음</option>
-                                <option value="daily">매일</option>
-                                <option value="weekly">매주</option>
-                                <option value="monthly">매월</option>
-                                <option value="yearly">매년</option>
-                            </select>
-                        </div>
+                        <label>반복 (대상장소가 전체 시설일 때)</label>
+                        <select id="scheduleItemRecurrenceType">
+                            <option value="">반복 없음</option>
+                            <option value="daily">매일</option>
+                            <option value="weekly">매주</option>
+                            <option value="monthly">매월</option>
+                        </select>
                         <div id="scheduleItemRecurrenceOptions" style="margin-top: 8px; display: none;">
                             <div id="scheduleItemRecurrenceWeekly" class="schedule-recur-weekly-row" style="display: none;">
                                 <span class="text-muted">요일:</span>
@@ -1500,16 +1565,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>작업유형 *</label>
-                        <select id="scheduleItemTaskTypeId" required>
-                            <option value="">선택</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>작업내용</label>
-                        <textarea id="scheduleItemDescription" rows="3"></textarea>
-                    </div>
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" onclick="closeScheduleItemModal()">취소</button>
                         <button type="button" class="btn btn-danger" id="scheduleItemModalDeleteBtn" style="display: none;" onclick="deleteScheduleItemFromModal()">삭제</button>
@@ -1520,48 +1575,230 @@
         </div>
     </div>
 
-    <!-- 테이블 데이터 수정 모달 -->
-    <div id="editRowModal" class="modal">
-        <div class="modal-content">
+    <!-- 일정: 기준 추가 (schedule_criterias) -->
+    <div id="scheduleBasisAddModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
             <div class="modal-header">
-                <h3>✏️ 데이터 수정</h3>
-                <button class="modal-close" onclick="closeEditRowModal()">&times;</button>
+                <h3>기준 유형 추가</h3>
+                <button class="modal-close" onclick="closeScheduleBasisAddModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <form id="editRowForm">
-                    <input type="hidden" id="editRowTableName">
-                    <input type="hidden" id="editRowId">
-                    <div id="editRowFields" class="form-scroll-container"
-                        style="max-height: 60vh; overflow-y: auto; padding-right: 10px;">
-                        <!-- JS로 필드 동적 생성 -->
-                    </div>
-                    <div class="modal-actions">
-                        <button type="button" class="btn btn-secondary" onclick="closeEditRowModal()">취소</button>
-                        <button type="submit" class="btn btn-primary">저장</button>
-                    </div>
-                </form>
+                <div class="form-group">
+                    <label>이름 *</label>
+                    <input type="text" id="scheduleBasisAddName" required placeholder="예: 전입일" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>설명 (용어 정의)</label>
+                    <textarea id="scheduleBasisAddDescription" rows="3" placeholder="예: 전입일은 돼지가 해당 사육사에 들어온 날을 의미합니다." maxlength="500" class="form-control"></textarea>
+                    <small class="text-muted">500자 이내</small>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeScheduleBasisAddModal()">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveScheduleBasisAddModal()">저장</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- 컬럼 선택 모달 -->
-    <div id="selectColumnModal" class="modal">
-        <div class="modal-content" style="max-width: 400px;">
+    <!-- 일정: 세부 작업유형 추가 (schedule-work-detail-types API) -->
+    <div id="scheduleWorkDetailAddModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
             <div class="modal-header">
-                <h3>👁️ 컬럼 보기 설정</h3>
-                <button class="modal-close" onclick="closeSelectColumnModal()">&times;</button>
+                <h3>세부 작업유형 추가</h3>
+                <button class="modal-close" onclick="closeScheduleWorkDetailAddModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="column-list-actions" style="margin-bottom: 15px; display: flex; gap: 10px;">
-                    <button type="button" class="btn btn-sm" onclick="toggleAllColumns(true)">전체 선택</button>
-                    <button type="button" class="btn btn-sm" onclick="toggleAllColumns(false)">전체 해제</button>
+                <div class="form-group">
+                    <label>대분류</label>
+                    <input type="text" id="scheduleWorkDetailAddWorkTypeName" readonly class="form-control" style="background: #eee;">
+                    <input type="hidden" id="scheduleWorkDetailAddWorkTypeId">
                 </div>
-                <div id="columnListContainer" class="column-list-container"
-                    style="max-height: 50vh; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <!-- JS로 컬럼 체크박스 생성 -->
+                <div class="form-group">
+                    <label>세부 이름 *</label>
+                    <input type="text" id="scheduleWorkDetailAddName" required placeholder="예: 분만사 이동" maxlength="100">
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-primary" onclick="applyColumnSelection()">적용</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeScheduleWorkDetailAddModal()">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveScheduleWorkDetailAddModal()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정: 작업유형 추가 (schedule_jobtypes) -->
+    <div id="scheduleJobtypeAddModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>작업유형 추가</h3>
+                <button class="modal-close" onclick="closeScheduleJobtypeAddModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>작업유형 이름 *</label>
+                    <input type="text" id="scheduleJobtypeAddName" required placeholder="예: 이동, 투약" maxlength="100">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeScheduleJobtypeAddModal()">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveScheduleJobtypeAdd()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 마스터: ① 장소-구분 매핑 추가/수정 -->
+    <div id="scheduleMasterDivisionStructureModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3 id="scheduleMasterDivisionStructureModalTitle">매핑 추가</h3>
+                <button class="modal-close" onclick="closeDivisionStructureModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="scheduleMasterDivisionStructureId">
+                <div class="form-group">
+                    <label>대상 장소 *</label>
+                    <select id="scheduleMasterDivisionStructurePlace" required></select>
+                </div>
+                <div class="form-group">
+                    <label>구분 *</label>
+                    <select id="scheduleMasterDivisionStructureDivision" required></select>
+                </div>
+                <div class="form-group">
+                    <label>순서</label>
+                    <input type="number" id="scheduleMasterDivisionStructureSortOrder" min="0" value="0">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeDivisionStructureModal()">취소</button>
+                    <button type="button" class="btn btn-danger" id="scheduleMasterDivisionStructureDeleteBtn" style="display: none;" onclick="deleteMasterDivisionStructureFromModal()">삭제</button>
+                    <button type="button" class="btn btn-primary" onclick="saveMasterDivisionStructure()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 마스터: 구분 추가/수정 -->
+    <div id="scheduleSortationAddModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>구분 추가</h3>
+                <button class="modal-close" onclick="closeScheduleSortationAddModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>구분 이름 *</label>
+                    <input type="text" id="scheduleSortationAddName" required placeholder="예: 시설, 돼지" maxlength="100">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeScheduleSortationAddModal()">취소</button>
+                    <button type="button" class="btn btn-primary" onclick="saveScheduleSortationAdd()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 마스터: ② 기준 추가/수정 -->
+    <div id="scheduleMasterBasisModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3 id="scheduleMasterBasisModalTitle">기준 추가</h3>
+                <button class="modal-close" onclick="closeMasterBasisModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="scheduleMasterBasisId">
+                <div class="form-group">
+                    <label>이름 *</label>
+                    <input type="text" id="scheduleMasterBasisName" required placeholder="예: 전입일" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>설명 (용어 정의)</label>
+                    <textarea id="scheduleMasterBasisDescription" rows="3" placeholder="예: 전입일은 돼지가 해당 사육사에 들어온 날을 의미합니다." maxlength="500" class="form-control"></textarea>
+                    <small class="text-muted">500자 이내</small>
+                </div>
+                <div class="form-group">
+                    <label>구분 (선택)</label>
+                    <select id="scheduleMasterBasisDivisionId">
+                        <option value="">전 구분 공통</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>순서</label>
+                    <input type="number" id="scheduleMasterBasisSortOrder" min="0" value="0">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMasterBasisModal()">취소</button>
+                    <button type="button" class="btn btn-danger" id="scheduleMasterBasisDeleteBtn" style="display: none;" onclick="deleteMasterBasisFromModal()">삭제</button>
+                    <button type="button" class="btn btn-primary" onclick="saveMasterBasis()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 마스터: ③ 작업유형 대분류 추가/수정 -->
+    <div id="scheduleMasterWorkTypeModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3 id="scheduleMasterWorkTypeModalTitle">대분류 추가</h3>
+                <button class="modal-close" onclick="closeMasterWorkTypeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="scheduleMasterWorkTypeId">
+                <div class="form-group">
+                    <label>이름 *</label>
+                    <input type="text" id="scheduleMasterWorkTypeName" required placeholder="예: 이동" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>적용 대상 *</label>
+                    <select id="scheduleMasterWorkTypeScope" required>
+                        <option value="pig">개체(돼지)</option>
+                        <option value="facility">시설</option>
+                        <option value="both">둘 다</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>순서</label>
+                    <input type="number" id="scheduleMasterWorkTypeSortOrder" min="0" value="0">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMasterWorkTypeModal()">취소</button>
+                    <button type="button" class="btn btn-danger" id="scheduleMasterWorkTypeDeleteBtn" style="display: none;" onclick="deleteMasterWorkTypeFromModal()">삭제</button>
+                    <button type="button" class="btn btn-primary" onclick="saveMasterWorkType()">저장</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 일정 마스터: ④ 작업유형 세부 추가/수정 -->
+    <div id="scheduleMasterWorkDetailModal" class="modal schedule-modal" style="display: none;">
+        <div class="modal-content schedule-modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3 id="scheduleMasterWorkDetailModalTitle">세부 추가</h3>
+                <button class="modal-close" onclick="closeMasterWorkDetailModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="scheduleMasterWorkDetailId">
+                <div class="form-group">
+                    <label>대상 장소 (다중 선택, 비우면 전체)</label>
+                    <div id="scheduleMasterWorkDetailStructureIds" class="multi-select-checkboxes multi-select-below"></div>
+                </div>
+                <div class="form-group">
+                    <label>구분 (다중 선택, 비우면 전체)</label>
+                    <div id="scheduleMasterWorkDetailDivisionIds" class="multi-select-checkboxes multi-select-below"></div>
+                </div>
+                <div class="form-group">
+                    <label>대분류 *</label>
+                    <select id="scheduleMasterWorkDetailWorkTypeId" required></select>
+                </div>
+                <div class="form-group">
+                    <label>세부 이름 *</label>
+                    <input type="text" id="scheduleMasterWorkDetailName" required placeholder="예: 분만사 이동" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>순서</label>
+                    <input type="number" id="scheduleMasterWorkDetailSortOrder" min="0" value="0">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMasterWorkDetailModal()">취소</button>
+                    <button type="button" class="btn btn-danger" id="scheduleMasterWorkDetailDeleteBtn" style="display: none;" onclick="deleteMasterWorkDetailFromModal()">삭제</button>
+                    <button type="button" class="btn btn-primary" onclick="saveMasterWorkDetail()">저장</button>
                 </div>
             </div>
         </div>
@@ -1570,4 +1807,5 @@
     <script src="/js/admin.js"></script>
 </body>
 
+</html>
 </html>

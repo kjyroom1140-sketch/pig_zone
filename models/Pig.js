@@ -63,11 +63,6 @@ const Pig = sequelize.define('Pig', {
         type: DataTypes.STRING(30),
         allowNull: true,
         comment: '상태 (사육중, 출하, 폐사 등)'
-    },
-    memo: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-        comment: '비고'
     }
 }, {
     tableName: 'pigs',

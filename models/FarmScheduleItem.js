@@ -52,12 +52,7 @@ const FarmScheduleItem = sequelize.define('FarmScheduleItem', {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: { model: 'farm_schedule_task_types', key: 'id' },
-        comment: '작업유형 (farm_schedule_task_types FK)'
-    },
-    description: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-        comment: '작업내용'
+        comment: '작업 내용 (farm_schedule_task_types FK)'
     },
     sortOrder: {
         type: DataTypes.INTEGER,

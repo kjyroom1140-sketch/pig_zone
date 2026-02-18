@@ -468,6 +468,27 @@ body {
     background: rgba(255, 255, 255, 0.05);
 }
 
+.nav-sub-group {
+    margin-bottom: 4px;
+}
+.nav-sub-group-title {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.9em;
+}
+.nav-sub-group-title .nav-sub-group-toggle {
+    display: inline-block;
+    width: 14px;
+    font-size: 0.75em;
+}
+.nav-sub-group-list {
+    border-left: 2px solid rgba(255, 255, 255, 0.1);
+    margin-left: 8px;
+    padding-left: 4px;
+}
+.nav-sub-group-list.collapsed {
+    display: none;
+}
+
 .nav-sub-item.active {
     color: white;
     background: var(--primary-color);
@@ -1165,8 +1186,72 @@ body {
 #farmScheduleBasisTypesListModal .schedule-list-modal-table-wrap .data-table th:nth-child(4),
 #farmScheduleBasisTypesListModal .schedule-list-modal-table-wrap .data-table td:nth-child(4) {
     width: auto;
-    min-width: 0;
-    text-align: left;
+}
+/* 일정 마스터 관리 페이지 */
+.schedule-master-card {
+    margin-bottom: 24px;
+}
+.schedule-master-card h3 {
+    margin-top: 0;
+    font-size: 1.1rem;
+}
+.schedule-master-main {
+    border-left: 3px solid var(--primary-color, #0d6efd);
+}
+.schedule-master-filters label {
+    margin-right: 2px;
+}
+.schedule-master-collapse-trigger {
+    padding: 4px 0;
+}
+.schedule-master-collapse-trigger:hover {
+    opacity: 0.9;
+}
+.schedule-master-upper-block h4 {
+    margin: 0 0 4px 0;
+    font-size: 0.95rem;
+}
+.schedule-master-upper-block .table-container {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+.data-table.data-table-sm th,
+.data-table.data-table-sm td {
+    padding: 6px 10px;
+    font-size: 0.9rem;
+}
+.data-table.data-table-sm .btn-sm {
+    padding: 2px 6px;
+    font-size: 0.8rem;
+}
+
+.multi-select-checkboxes .multi-select-item {
+    display: block;
+    padding: 4px 0;
+    cursor: pointer;
+}
+.multi-select-checkboxes .multi-select-item input {
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.multi-select-checkboxes.multi-select-below {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: center;
+    max-height: 120px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 6px;
+}
+.multi-select-checkboxes.multi-select-below .multi-select-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 0;
+    white-space: nowrap;
 }
 .schedule-list-modal-table-wrap input[type="checkbox"] {
     width: 18px;
@@ -1268,6 +1353,22 @@ body {
 #scheduleItemModal .modal-body .form-group,
 #farmScheduleItemModal .modal-body .form-group {
     margin-bottom: 20px !important;
+}
+/* 구분/작업유형 세부: 셀렉트 아래에 추가 버튼 배치 */
+#scheduleItemModal .modal-body .form-group.form-group-stacked .schedule-item-division-wrap,
+#scheduleItemModal .modal-body .form-group.form-group-stacked .schedule-item-field-with-add {
+    flex: 1 !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+}
+#scheduleItemModal .modal-body .form-group.form-group-stacked .schedule-item-division-wrap select,
+#scheduleItemModal .modal-body .form-group.form-group-stacked .schedule-item-field-with-add select {
+    width: 100% !important;
+}
+#scheduleItemModal .modal-body .form-group .schedule-item-add-below {
+    margin-top: 8px !important;
 }
 #scheduleItemModal .modal-body label,
 #farmScheduleItemModal .modal-body label {

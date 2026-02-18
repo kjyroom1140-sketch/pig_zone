@@ -114,7 +114,6 @@
 | birth_date | DATE | Y | 출생일 |
 | entry_date | DATE | Y | 전입/입식일 |
 | status | VARCHAR(30) | Y | 상태 (사육중, 출하, 폐사 등) |
-| memo | TEXT | Y | 비고 |
 | created_at | TIMESTAMP | N | |
 | updated_at | TIMESTAMP | N | |
 
@@ -137,12 +136,11 @@
 | **group_no** | **VARCHAR(30)** | **Y** | **돈군 번호(사람이 보는 식별자). 생성 일시 기반 → 3.3절 참고** |
 | current_section_id | UUID | Y | FK → farm_sections.id. 현재 있는 칸(주된 위치) |
 | entry_date | DATE | Y | 입식/전입일 |
-| days_old | INTEGER | Y | 일령 (계산 또는 입력) |
+| birth_date | DATE | Y | 출생일 |
 | breed_type | VARCHAR(50) | Y | 대표 품종 |
 | headcount | INTEGER | Y | 두수 (객체 테이블 사용 시 COUNT로 보정 가능) |
 | status | VARCHAR(30) | Y | active, split, merged, closed 등 |
 | parent_group_id | UUID | Y | FK → pig_groups.id. 분할 시 “원래 돈군” 참조 |
-| memo | TEXT | Y | 비고 |
 | created_at | TIMESTAMP | N | 돈군 번호(group_no) 생성에 사용 (3.3절) |
 | updated_at | TIMESTAMP | N | |
 

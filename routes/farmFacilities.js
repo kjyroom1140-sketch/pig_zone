@@ -86,7 +86,7 @@ router.get('/:farmId/tree', isAuthenticated, checkFarmPermission, async (req, re
                         required: false,
                         attributes: [
                             'id', 'roomId', 'name', 'sectionNumber', 'currentPigCount',
-                            'averageWeight', 'entryDate', 'daysOld', 'breedType',
+                            'averageWeight', 'entryDate', 'birthDate', 'breedType',
                             'area', 'capacity', 'orderIndex'
                         ]
                     }]
@@ -729,7 +729,7 @@ router.put('/sections/:sectionId', isAuthenticated, async (req, res) => {
     try {
         const { sectionId } = req.params;
         const {
-            currentPigCount, averageWeight, entryDate, daysOld,
+            currentPigCount, averageWeight, entryDate, birthDate,
             breedType, area, capacity
         } = req.body;
 
@@ -751,7 +751,7 @@ router.put('/sections/:sectionId', isAuthenticated, async (req, res) => {
             currentPigCount,
             averageWeight,
             entryDate,
-            daysOld,
+            birthDate,
             breedType,
             area,
             capacity

@@ -64,7 +64,7 @@ router.get('/', async (req, res) => {
 // 템플릿 추가 (해당 카테고리 내 맨 뒤 순서로)
 router.post('/', async (req, res) => {
     try {
-        const { name, category, weight, optimalDensity, description } = req.body;
+        const { name, category, weight, optimalDensity, ageLabel, description } = req.body;
 
         const maxSort = await StructureTemplate.max('sortOrder', {
             where: { category: category || 'production' }
@@ -76,6 +76,7 @@ router.post('/', async (req, res) => {
             category,
             weight,
             optimalDensity,
+            ageLabel: ageLabel != null ? String(ageLabel).trim() || null : null,
             description,
             sortOrder
         });
@@ -93,14 +94,14 @@ router.post('/reorder', handleReorder);
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, category, weight, optimalDensity, description, sortOrder } = req.body;
+        const { name, category, weight, optimalDensity, ageLabel, description, sortOrder } = req.body;
 
         const template = await StructureTemplate.findByPk(id);
         if (!template) {
             return res.status(404).json({ error: '템플릿을 찾을 수 없습니다.' });
         }
 
-        const updates = { name, category, weight, optimalDensity, description };
+        const updates = { name, category, weight, optimalDensity, ageLabel: ageLabel != null ? String(ageLabel).trim() || null : null, description };
         if (sortOrder !== undefined) updates.sortOrder = parseInt(sortOrder, 10);
         await template.update(updates);
         res.json(template);

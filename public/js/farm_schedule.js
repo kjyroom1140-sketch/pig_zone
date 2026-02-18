@@ -105,14 +105,18 @@
             };
 
             if (farmScheduleItems.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="12" class="text-muted">조건에 맞는 일정이 없습니다.</td></tr>' +
-                    '<tr class="schedule-insert-row" data-insert-index="0"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="11" class="schedule-insert-spacer"></td></tr>';
+                const noMasters = (!scheduleTaskTypes || scheduleTaskTypes.length === 0) || (!scheduleBasisTypes || scheduleBasisTypes.length === 0);
+                const hint = noMasters
+                    ? '<tr><td colspan="11" class="text-muted" style="padding: 12px;">일정이 없습니다. 전역 일정(기준·작업 내용)을 이 농장에 반영하려면 <strong>농장 구조</strong> 메뉴에서 대상 장소를 선택한 뒤 <strong>저장</strong>하세요. 저장 시 전역 기준·작업유형이 복사되고, 해당 장소의 전역 일정이 농장 일정으로 복사됩니다.</td></tr>'
+                    : '<tr><td colspan="11" class="text-muted">조건에 맞는 일정이 없습니다.</td></tr>';
+                tbody.innerHTML = hint +
+                    '<tr class="schedule-insert-row" data-insert-index="0"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="10" class="schedule-insert-spacer"></td></tr>';
             } else {
                 const sorted = [...farmScheduleItems].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
                 const rows = [];
                 for (let i = 0; i < sorted.length; i++) {
                     const structureId = sorted[i].structureTemplateId != null ? String(sorted[i].structureTemplateId) : '';
-                    rows.push(`<tr class="schedule-insert-row" data-insert-index="${i}" data-insert-structure-id="${structureId}"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="11" class="schedule-insert-spacer"></td></tr>`);
+                    rows.push(`<tr class="schedule-insert-row" data-insert-index="${i}" data-insert-structure-id="${structureId}"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="10" class="schedule-insert-spacer"></td></tr>`);
                     const s = sorted[i];
                     const place = s.structureTemplate ? s.structureTemplate.name : '-';
                     const isFacility = isFacilityTargetType(s.targetType);
@@ -136,12 +140,11 @@
                         <td>${escapeHtml(String(dayMaxStr))}</td>
                         <td>${escapeHtml(recurrenceIntervalLabel)}</td>
                         <td>${escapeHtml(task)}</td>
-                        <td>${escapeHtml((s.description || '').slice(0, 40))}${(s.description || '').length > 40 ? '…' : ''}</td>
                     </tr>
                     `);
                 }
                 const lastStructureId = sorted.length > 0 && sorted[sorted.length - 1].structureTemplateId != null ? String(sorted[sorted.length - 1].structureTemplateId) : '';
-                rows.push(`<tr class="schedule-insert-row" data-insert-index="${sorted.length}" data-insert-structure-id="${lastStructureId}"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="11" class="schedule-insert-spacer"></td></tr>`);
+                rows.push(`<tr class="schedule-insert-row" data-insert-index="${sorted.length}" data-insert-structure-id="${lastStructureId}"><td class="schedule-insert-cell"><button type="button" class="schedule-insert-btn" title="이 위치에 일정 추가">+</button></td><td colspan="10" class="schedule-insert-spacer"></td></tr>`);
                 tbody.innerHTML = rows.join('');
             }
 
@@ -207,7 +210,7 @@
             const checkAll = document.getElementById('farmScheduleItemCheckAll');
             if (checkAll) checkAll.checked = false;
         } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="12" class="error">' + escapeHtml(e.message) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="error">' + escapeHtml(e.message) + '</td></tr>';
         }
     };
 
@@ -236,7 +239,6 @@
                         dayMin: s.dayMin,
                         dayMax: s.dayMax,
                         taskTypeId: s.taskTypeId,
-                        description: s.description,
                         sortOrder: i,
                         isActive: s.isActive !== false
                     })
@@ -337,7 +339,6 @@
             document.getElementById('farmScheduleItemAgeLabel').value = s.ageLabel || '';
             document.getElementById('farmScheduleItemDayMin').value = s.dayMin != null ? s.dayMin : '';
             document.getElementById('farmScheduleItemDayMax').value = s.dayMax != null ? s.dayMax : '';
-            document.getElementById('farmScheduleItemDescription').value = s.description || '';
             document.getElementById('farmScheduleItemRecurrenceType').value = s.recurrenceType || '';
             if (deleteBtn) deleteBtn.style.display = 'inline-block';
             syncFarmScheduleItemModalToTargetType();
@@ -430,11 +431,10 @@
         const dayMin = document.getElementById('farmScheduleItemDayMin').value;
         const dayMax = document.getElementById('farmScheduleItemDayMax').value;
         const taskTypeId = document.getElementById('farmScheduleItemTaskTypeId').value;
-        const description = document.getElementById('farmScheduleItemDescription').value;
         const recurrenceType = document.getElementById('farmScheduleItemRecurrenceType').value;
 
         if (!taskTypeId) {
-            alert('작업유형을 선택하세요.');
+            alert('작업 내용을 선택하세요.');
             return;
         }
 
@@ -446,7 +446,6 @@
             dayMin: !isFacilityTargetType(targetType) && dayMin !== '' ? parseInt(dayMin, 10) : null,
             dayMax: !isFacilityTargetType(targetType) && dayMax !== '' ? parseInt(dayMax, 10) : null,
             taskTypeId: parseInt(taskTypeId, 10),
-            description: description || null,
             isActive: true
         };
 

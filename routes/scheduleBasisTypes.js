@@ -1,10 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { ScheduleBasisType } = require('../models');
+const { ScheduleItemType } = require('../models');
+
+const BASIS_KIND = 'basis';
 
 router.get('/', async (req, res) => {
     try {
-        const list = await ScheduleBasisType.findAll({
+        const list = await ScheduleItemType.findAll({
+            where: { kind: BASIS_KIND },
             order: [['sortOrder', 'ASC'], ['id', 'ASC']]
         });
         res.json(list);
@@ -17,7 +20,8 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { code, name, targetType, description, sortOrder } = req.body;
-        const created = await ScheduleBasisType.create({
+        const created = await ScheduleItemType.create({
+            kind: BASIS_KIND,
             code: code || null,
             name: name || '',
             targetType: targetType || null,
@@ -34,15 +38,15 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { code, name, targetType, description, sortOrder } = req.body;
-        const row = await ScheduleBasisType.findByPk(id);
+        const row = await ScheduleItemType.findOne({ where: { id, kind: BASIS_KIND } });
         if (!row) return res.status(404).json({ error: '기준 유형을 찾을 수 없습니다.' });
+        const { code, name, targetType, description, sortOrder } = req.body;
         await row.update({
-            code: code || null,
-            name: name || '',
-            targetType: targetType || null,
-            description: description || null,
-            sortOrder: sortOrder != null ? sortOrder : 0
+            code: code !== undefined ? code : row.code,
+            name: name !== undefined ? name : row.name,
+            targetType: targetType !== undefined ? targetType : row.targetType,
+            description: description !== undefined ? description : row.description,
+            sortOrder: sortOrder !== undefined ? sortOrder : row.sortOrder
         });
         res.json(row);
     } catch (error) {
@@ -54,7 +58,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const row = await ScheduleBasisType.findByPk(id);
+        const row = await ScheduleItemType.findOne({ where: { id, kind: BASIS_KIND } });
         if (!row) return res.status(404).json({ error: '기준 유형을 찾을 수 없습니다.' });
         await row.destroy();
         res.json({ message: '삭제되었습니다.' });

@@ -34,10 +34,10 @@ const PigGroup = sequelize.define('PigGroup', {
         allowNull: true,
         comment: '입식/전입일'
     },
-    daysOld: {
-        type: DataTypes.INTEGER,
+    birthDate: {
+        type: DataTypes.DATEONLY,
         allowNull: true,
-        comment: '일령 (계산 또는 입력)'
+        comment: '출생일'
     },
     breedType: {
         type: DataTypes.STRING(50),
@@ -59,11 +59,6 @@ const PigGroup = sequelize.define('PigGroup', {
         allowNull: true,
         references: { model: 'pig_groups', key: 'id' },
         comment: '분할 시 원래 돈군 참조'
-    },
-    memo: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-        comment: '비고'
     }
 }, {
     tableName: 'pig_groups',

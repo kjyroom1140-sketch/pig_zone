@@ -203,29 +203,52 @@ FarmSection.belongsTo(Farm, {
 });
 
 const StructureTemplate = require('./StructureTemplate');
-const ScheduleTaskType = require('./ScheduleTaskType');
-const ScheduleBasisType = require('./ScheduleBasisType');
+const ScheduleDivision = require('./ScheduleDivision');
+const ScheduleBase = require('./ScheduleBase');
+const ScheduleWorkType = require('./ScheduleWorkType');
+const ScheduleWorkDetailType = require('./ScheduleWorkDetailType');
+const ScheduleWorkDetailTypeStructure = require('./ScheduleWorkDetailTypeStructure');
+const ScheduleWorkDetailTypeDivision = require('./ScheduleWorkDetailTypeDivision');
+const ScheduleDivisionStructure = require('./ScheduleDivisionStructure');
 const ScheduleItem = require('./ScheduleItem');
 const FarmScheduleItem = require('./FarmScheduleItem');
 const FarmScheduleTaskType = require('./FarmScheduleTaskType');
 const FarmScheduleBasisType = require('./FarmScheduleBasisType');
-const ScheduleTaskTypeStructure = require('./ScheduleTaskTypeStructure');
 const FarmScheduleTaskTypeStructure = require('./FarmScheduleTaskTypeStructure');
 const FarmScheduleWorkPlan = require('./FarmScheduleWorkPlan');
+const ScheduleSortation = require('./ScheduleSortation');
+const ScheduleCriteria = require('./ScheduleCriteria');
+const ScheduleJobtype = require('./ScheduleJobtype');
+const ScheduleWorkPlanDef = require('./ScheduleWorkPlanDef');
 
-// 일정: ScheduleItem → StructureTemplate, ScheduleTaskType, ScheduleBasisType
+// 전역 일정 (docs: schedule_structure_design.md)
+ScheduleDivision.hasMany(ScheduleDivisionStructure, { foreignKey: 'divisionId', as: 'structureMappings', onDelete: 'CASCADE' });
+ScheduleDivisionStructure.belongsTo(ScheduleDivision, { foreignKey: 'divisionId', as: 'division' });
+ScheduleDivisionStructure.belongsTo(StructureTemplate, { foreignKey: 'structureTemplateId', as: 'structureTemplate' });
+StructureTemplate.hasMany(ScheduleDivisionStructure, { foreignKey: 'structureTemplateId', as: 'divisionMappings' });
+
+ScheduleBase.belongsTo(ScheduleDivision, { foreignKey: 'divisionId', as: 'division' });
+ScheduleDivision.hasMany(ScheduleBase, { foreignKey: 'divisionId', as: 'bases' });
+
+ScheduleWorkType.belongsTo(ScheduleDivision, { foreignKey: 'divisionId', as: 'division' });
+ScheduleDivision.hasMany(ScheduleWorkType, { foreignKey: 'divisionId', as: 'workTypes' });
+ScheduleWorkType.hasMany(ScheduleWorkDetailType, { foreignKey: 'workTypeId', as: 'detailTypes', onDelete: 'CASCADE' });
+ScheduleWorkDetailType.belongsTo(ScheduleWorkType, { foreignKey: 'workTypeId', as: 'workType' });
+ScheduleWorkDetailType.hasMany(ScheduleWorkDetailTypeStructure, { foreignKey: 'workDetailTypeId', as: 'structureScopes', onDelete: 'CASCADE' });
+ScheduleWorkDetailTypeStructure.belongsTo(ScheduleWorkDetailType, { foreignKey: 'workDetailTypeId', as: 'workDetailType' });
+ScheduleWorkDetailTypeStructure.belongsTo(StructureTemplate, { foreignKey: 'structureTemplateId', as: 'structureTemplate' });
+ScheduleWorkDetailType.hasMany(ScheduleWorkDetailTypeDivision, { foreignKey: 'workDetailTypeId', as: 'divisionScopes', onDelete: 'CASCADE' });
+ScheduleWorkDetailTypeDivision.belongsTo(ScheduleWorkDetailType, { foreignKey: 'workDetailTypeId', as: 'workDetailType' });
+ScheduleWorkDetailTypeDivision.belongsTo(ScheduleDivision, { foreignKey: 'divisionId', as: 'division' });
+
+ScheduleItem.belongsTo(ScheduleDivision, { foreignKey: 'divisionId', as: 'division' });
 ScheduleItem.belongsTo(StructureTemplate, { foreignKey: 'structureTemplateId', as: 'structureTemplate' });
-ScheduleItem.belongsTo(ScheduleTaskType, { foreignKey: 'taskTypeId', as: 'taskType' });
-ScheduleItem.belongsTo(ScheduleBasisType, { foreignKey: 'basisTypeId', as: 'basisTypeRef' });
+ScheduleItem.belongsTo(ScheduleBase, { foreignKey: 'basisId', as: 'basis' });
+ScheduleItem.belongsTo(ScheduleWorkDetailType, { foreignKey: 'workDetailTypeId', as: 'workDetailType' });
+ScheduleDivision.hasMany(ScheduleItem, { foreignKey: 'divisionId', as: 'scheduleItems' });
 StructureTemplate.hasMany(ScheduleItem, { foreignKey: 'structureTemplateId', as: 'scheduleItems' });
-ScheduleTaskType.hasMany(ScheduleItem, { foreignKey: 'taskTypeId', as: 'scheduleItems' });
-ScheduleBasisType.hasMany(ScheduleItem, { foreignKey: 'basisTypeId', as: 'scheduleItems' });
-
-// 작업 유형 적용 대상 (전체 시설 vs 특정 장소)
-ScheduleTaskType.hasMany(ScheduleTaskTypeStructure, { foreignKey: 'scheduleTaskTypeId', as: 'structureScopes', onDelete: 'CASCADE' });
-ScheduleTaskTypeStructure.belongsTo(ScheduleTaskType, { foreignKey: 'scheduleTaskTypeId', as: 'scheduleTaskType' });
-ScheduleTaskTypeStructure.belongsTo(StructureTemplate, { foreignKey: 'structureTemplateId', as: 'structureTemplate' });
-StructureTemplate.hasMany(ScheduleTaskTypeStructure, { foreignKey: 'structureTemplateId', as: 'taskTypeStructures' });
+ScheduleBase.hasMany(ScheduleItem, { foreignKey: 'basisId', as: 'scheduleItems' });
+ScheduleWorkDetailType.hasMany(ScheduleItem, { foreignKey: 'workDetailTypeId', as: 'scheduleItems' });
 
 FarmScheduleTaskType.hasMany(FarmScheduleTaskTypeStructure, { foreignKey: 'farmScheduleTaskTypeId', as: 'structureScopes', onDelete: 'CASCADE' });
 FarmScheduleTaskTypeStructure.belongsTo(FarmScheduleTaskType, { foreignKey: 'farmScheduleTaskTypeId', as: 'farmScheduleTaskType' });
@@ -299,14 +322,18 @@ module.exports = {
     FarmStructure,
     Role,
     StructureTemplate,
-    ScheduleTaskType,
-    ScheduleBasisType,
-    ScheduleTaskTypeStructure,
-    FarmScheduleTaskTypeStructure,
+    ScheduleDivision,
+    ScheduleBase,
+    ScheduleWorkType,
+    ScheduleWorkDetailType,
+    ScheduleWorkDetailTypeStructure,
+    ScheduleWorkDetailTypeDivision,
+    ScheduleDivisionStructure,
     ScheduleItem,
     FarmScheduleItem,
     FarmScheduleTaskType,
     FarmScheduleBasisType,
+    FarmScheduleTaskTypeStructure,
     // 새로운 모델
     FarmBuilding,
     FarmBarn,
@@ -316,5 +343,9 @@ module.exports = {
     Pig,
     SectionGroupOccupancy,
     PigMovement,
-    FarmScheduleWorkPlan
+    FarmScheduleWorkPlan,
+    ScheduleSortation,
+    ScheduleCriteria,
+    ScheduleJobtype,
+    ScheduleWorkPlanDef
 };

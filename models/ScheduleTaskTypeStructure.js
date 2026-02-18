@@ -5,9 +5,9 @@ const ScheduleTaskTypeStructure = sequelize.define('ScheduleTaskTypeStructure', 
     scheduleTaskTypeId: {
         type: DataTypes.INTEGER,
         primaryKey: true,
-        references: { model: 'schedule_task_types', key: 'id' },
+        references: { model: 'schedule_item_types', key: 'id' },
         onDelete: 'CASCADE',
-        comment: '작업 유형 ID'
+        comment: '작업 유형 ID (schedule_item_types.id, kind=task)'
     },
     structureTemplateId: {
         type: DataTypes.INTEGER,

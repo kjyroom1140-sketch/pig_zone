@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { ScheduleTaskType, ScheduleTaskTypeStructure, StructureTemplate } = require('../models');
+const { ScheduleItemType, ScheduleTaskTypeStructure, StructureTemplate } = require('../models');
 const { Op } = require('sequelize');
+
+const TASK_KIND = 'task';
 
 router.get('/', async (req, res) => {
     try {
@@ -9,13 +11,13 @@ router.get('/', async (req, res) => {
         const include = [
             { model: ScheduleTaskTypeStructure, as: 'structureScopes', attributes: ['structureTemplateId'], include: [{ model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name'] }] }
         ];
-        let where = {};
+        let where = { kind: TASK_KIND };
         if (structureTemplateId) {
             const scopedRows = await ScheduleTaskTypeStructure.findAll({ where: { structureTemplateId }, attributes: ['scheduleTaskTypeId'] });
             const scopedIds = scopedRows.map(r => r.scheduleTaskTypeId);
-            where = { [Op.or]: [{ appliesToAllStructures: true }, ...(scopedIds.length ? [{ id: { [Op.in]: scopedIds } }] : []) ] };
+            where = { ...where, [Op.or]: [{ appliesToAllStructures: true }, ...(scopedIds.length ? [{ id: { [Op.in]: scopedIds } }] : []) ] };
         }
-        const list = await ScheduleTaskType.findAll({
+        const list = await ScheduleItemType.findAll({
             where,
             include,
             order: [['sortOrder', 'ASC'], ['id', 'ASC']]
@@ -31,7 +33,8 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { code, name, category, sortOrder, appliesToAllStructures, structureTemplateIds } = req.body;
-        const created = await ScheduleTaskType.create({
+        const created = await ScheduleItemType.create({
+            kind: TASK_KIND,
             code: code || null,
             name: name || '',
             category: category || null,
@@ -43,7 +46,7 @@ router.post('/', async (req, res) => {
                 structureTemplateIds.filter(id => id != null && String(id).trim() !== '').map(sid => ({ scheduleTaskTypeId: created.id, structureTemplateId: parseInt(sid, 10) }))
             );
         }
-        const withScopes = await ScheduleTaskType.findByPk(created.id, {
+        const withScopes = await ScheduleItemType.findByPk(created.id, {
             include: [{ model: ScheduleTaskTypeStructure, as: 'structureScopes', include: [{ model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name'] }] }]
         });
         res.status(201).json(withScopes || created);
@@ -58,7 +61,7 @@ router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { code, name, category, sortOrder, appliesToAllStructures, structureTemplateIds } = req.body;
-        const row = await ScheduleTaskType.findByPk(id);
+        const row = await ScheduleItemType.findOne({ where: { id, kind: TASK_KIND } });
         if (!row) return res.status(404).json({ error: '작업 유형을 찾을 수 없습니다.' });
         await row.update({
             code: code !== undefined ? code : row.code,
@@ -73,7 +76,7 @@ router.put('/:id', async (req, res) => {
                 structureTemplateIds.filter(sid => sid != null && String(sid).trim() !== '').map(sid => ({ scheduleTaskTypeId: row.id, structureTemplateId: parseInt(sid, 10) }))
             );
         }
-        const withScopes = await ScheduleTaskType.findByPk(row.id, {
+        const withScopes = await ScheduleItemType.findByPk(row.id, {
             include: [{ model: ScheduleTaskTypeStructure, as: 'structureScopes', include: [{ model: StructureTemplate, as: 'structureTemplate', attributes: ['id', 'name'] }] }]
         });
         res.json(withScopes || row);
@@ -87,7 +90,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const row = await ScheduleTaskType.findByPk(id);
+        const row = await ScheduleItemType.findOne({ where: { id, kind: TASK_KIND } });
         if (!row) return res.status(404).json({ error: '작업 유형을 찾을 수 없습니다.' });
         await row.destroy();
         res.json({ message: '삭제되었습니다.' });
