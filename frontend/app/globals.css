@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --font-sans: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-sans);
+}
+
+body {
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+/* 입력 요소를 포함한 모든 UI 요소에 동일 폰트 적용 */
+input, button, textarea, select, optgroup, option {
+  font-family: var(--font-sans);
+}
+
+a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Admin 좌측 메뉴: 다크 블루 컨셉, 글자 선명도 보정 */
+.admin-sidebar {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.admin-sidebar-nav a.admin-sidebar-link:hover {
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #fff !important;
+}
+
+.admin-sidebar-nav button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Admin 구조 템플릿 페이지: 글꼴 선명도 및 목록 배경 */
+.admin-structure-templates-page {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

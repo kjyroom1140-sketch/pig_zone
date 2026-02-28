@@ -1,6 +1,7 @@
 # 일정 추가 — 정리 문서
 
-> 이 문서는 **일정 추가** 기능에 대한 요구사항, 화면·API·DB 매핑, 정리 사항을 기록합니다.
+> 이 문서는 **일정 추가** 기능에 대한 요구사항, 화면·API·DB 매핑, 정리 사항을 기록합니다.  
+> **기초 일정 관리** 페이지(`/admin/schedule-work-plans`)의 구분/기준/작업유형 추가 구현 상태가 반영되어 있습니다.
 
 ---
 
@@ -57,13 +58,13 @@
 
 | 구분 | 내용 |
 |------|------|
-| **화면** | 일정 추가 모달 > 기준 셀렉트(`scheduleItemBasisId`) 하단에 항상 **➕ 기준 추가** 옵션 표시 |
-| **동작** | 해당 옵션 선택 시 기준 추가 모달 열기 → 이름 입력 후 저장 → `schedule_criterias` 테이블에 저장, 기준 목록 갱신 후 새 항목 자동 선택 |
-| **옵션 소스/저장** | 옵션: `GET /api/schedule-criterias`(기존). 저장: `schedule_criterias` 테이블 |
-| **테이블 구조** | `schedule_criterias`: id, sortations(TEXT), criterias(TEXT), createdAt, updatedAt |
-| **백엔드** | `POST /api/schedule-criterias` 추가. body: `name`(필수), `criterias`(TEXT/JSON, 선택). name만 있으면 `criterias`에 `[{ name }]` 형태로 저장 |
-| **프론트** | ① `fillScheduleItemBasisOptions()`에서 기준 목록 아래에 `<option value="__add__">➕ 기준 추가</option>` 항상 추가 ② `scheduleItemBasisId` change 시 `value === '__add__'`이면 기준 추가 모달 열기(기존 `openScheduleBasisAddModalFromItem` 유무 확인 후 연동 또는 신규) ③ 기준 추가 모달: 이름 입력 필드, 저장 시 `POST /api/schedule-criterias`, 성공 시 `loadScheduleBases()` 호출 후 구분에 맞게 `fillScheduleItemBasisOptions()` 재호출, 새로 생성된 id로 셀렉트 값 설정 |
-| **비고** | 현재 기준 추가 모달이 일정 마스터용(`scheduleMasterBasisModal` 등)으로 다른 API(`schedule-bases`)를 쓸 수 있음. 일정 항목용은 `schedule_criterias` 전용 모달/API로 구현할 것 |
+| **화면** | **기초 일정 관리** 페이지(`/admin/schedule-work-plans`) > 기준 패널 하단 **+ 기준 추가** 버튼. (일정 추가 모달의 기준 셀렉트에 ➕ 기준 추가 옵션은 별도 구현 시 동일 API 사용) |
+| **동작** | 구분 선택 후 **+ 기준 추가** 클릭 → 기준 추가 모달 열기 → 이름 입력 후 저장 → `schedule_criterias` 테이블에 저장, 기준 목록 갱신 후 모달 닫기 |
+| **옵션 소스/저장** | 옵션: `GET /api/schedule-criterias`. 저장: `schedule_criterias` 테이블 |
+| **테이블 구조** | `schedule_criterias`: id, **schedule_sortations_id**(INTEGER, 구분 FK), **criterias**(TEXT/JSON), "createdAt", "updatedAt". *(sortations, description 컬럼 제거됨)* |
+| **백엔드** | ✅ `POST /api/schedule-criterias` 구현됨. body: `name`(필수), `schedule_sortations_id`(필수, 선택한 구분 id), `criterias`(선택). name만 있으면 `criterias`에 `[{"name":"기준이름"}]` 형태로 저장 |
+| **프론트** | ✅ 기초 일정 관리: 구분 라디오 선택 → + 기준 추가 → 모달에서 이름 입력 → `createScheduleCriteria({ name, schedule_sortations_id, criterias: [{ name }] })` 호출, 성공 시 `loadChains()` 및 목록 갱신 |
+| **비고** | 일정 항목용 모달에서 기준 셀렉트 + 「➕ 기준 추가」 옵션은 위 API를 그대로 사용하면 됨 |
 
 ---
 
@@ -71,24 +72,25 @@
 
 | 구분 | 내용 |
 |------|------|
-| **화면** | 일정 추가 모달 > 작업유형 셀렉트(`scheduleItemWorkTypeId`) 하단에 항상 **➕ 작업유형 추가** 옵션 표시 |
-| **동작** | 해당 옵션 선택 시 작업유형 추가 모달 열기 → 이름 입력 후 저장 → `schedule_jobtypes` 테이블에 저장, 작업유형 목록 갱신 후 새 항목 자동 선택 |
-| **옵션 소스/저장** | 옵션: `GET /api/schedule-jobtypes`(기존). 저장: `schedule_jobtypes` 테이블 |
-| **테이블 구조** | `schedule_jobtypes`: id, criterias(TEXT), jobtypes(TEXT), createdAt, updatedAt |
-| **백엔드** | `POST /api/schedule-jobtypes` 추가. body: `name`(필수), `jobtypes`(TEXT/JSON, 선택). name만 있으면 `jobtypes`에 `[{ name }]` 형태로 저장 |
-| **프론트** | ① `fillScheduleItemWorkTypeOptions()`에서 작업유형 목록 아래에 `<option value="__add__">➕ 작업유형 추가</option>` 항상 추가 ② `scheduleItemWorkTypeId` change 시 `value === '__add__'`이면 작업유형 추가 모달 열기 ③ 작업유형 추가 모달: 이름 입력 필드, 저장 시 `POST /api/schedule-jobtypes`, 성공 시 `loadScheduleWorkTypes()` 호출 후 `fillScheduleItemWorkTypeOptions()` 재호출, 새로 생성된 id로 셀렉트 값 설정 |
+| **화면** | **기초 일정 관리** 페이지 > 작업유형 패널 하단 **+ 작업유형 추가** 버튼. (일정 추가 모달의 작업유형 셀렉트에 ➕ 작업유형 추가 옵션은 별도 구현 시 동일 API 사용) |
+| **동작** | 구분·기준 선택 후 **+ 작업유형 추가** 클릭 → 작업유형 추가 모달 열기 → 이름 입력 후 저장 → `schedule_jobtypes` 테이블에 저장, 목록 갱신 |
+| **옵션 소스/저장** | 옵션: `GET /api/schedule-jobtypes`. 저장: `schedule_jobtypes` 테이블 |
+| **테이블 구조** | `schedule_jobtypes`: id, schedule_criterias_id(INTEGER), jobtypes(TEXT), "createdAt", "updatedAt" |
+| **백엔드** | ✅ `POST /api/schedule-jobtypes` 구현됨. body: `name`(필수), `schedule_criterias_id`(필수), `jobtypes`(선택). name만 있으면 `jobtypes`에 `[{"name":"작업유형이름"}]` 형태로 저장 |
+| **프론트** | ⏳ 기초 일정 관리: 작업유형 추가 모달/API 연동은 TODO. 구현 시 기준 추가와 동일 패턴(선택한 기준 id로 `createScheduleJobtype` 호출) |
 | **비고** | 작업 내용(세부)은 `schedule_jobtypes`의 jobtypes JSON 내부 구조로 관리. 1단계에서는 대분류(작업유형) 추가만 구현해도 됨 |
 
 ---
 
-### 5.3 구현 순서 제안
+### 5.3 구현 순서 제안 / 현재 상태
 
-1. **기준 추가**: POST /api/schedule-criterias 구현 → 기준 추가 모달(일정 항목용) 추가/연동 → `fillScheduleItemBasisOptions`에 ➕ 기준 추가 옵션 및 change 처리.
-2. **작업유형 추가**: POST /api/schedule-jobtypes 구현 → 작업유형 추가 모달 추가 → `fillScheduleItemWorkTypeOptions`에 ➕ 작업유형 추가 옵션 및 change 처리.
+1. **기준 추가**: ✅ 완료. POST /api/schedule-criterias, 기초 일정 관리 페이지 기준 추가 모달 구현. 일정 항목용 모달에 ➕ 기준 추가 옵션 연동 시 동일 API 사용.
+2. **작업유형 추가**: 백엔드 POST /api/schedule-jobtypes ✅ 있음. 기초 일정 관리 페이지에 작업유형 추가 모달·연동 ⏳ TODO. 일정 항목용은 `fillScheduleItemWorkTypeOptions`에 ➕ 작업유형 추가 옵션 및 change 처리.
 
 ---
 
 ## 6. 참고
 
-- 기존 설계: `schedule_structure_design.md`, `schedule_item_form_to_db_mapping.md` 등
-- 구분 추가: `schedule_sortations` + `POST /api/schedule-sortations` + 구분 추가 모달(`scheduleSortationAddModal`) 참고
+- 기존 설계: `schedule_structure_design.md`, `schedule_implementation_summary.md` 등
+- **구분 추가**: ✅ `schedule_sortations` + `POST /api/schedule-sortations` + 기초 일정 관리 페이지 구분 추가 모달 구현됨
+- **테이블 참고**: `docs/table_structures_reference.md` — schedule_criterias는 schedule_sortations_id, criterias만 사용(sortations/description 제거)

@@ -17,10 +17,7 @@
 
 ### 1.1 기존 DB 마이그레이션
 
-기존에 `floor`·`buildingGroupId` 컬럼이 있던 DB는 다음 스크립트로 새 설계에 맞게 통합할 수 있습니다.
-
-- `node scripts/migrate_buildings_one_row_per_building.js`  
-  (동당 여러 row를 1 row로 합치고, farm_barns에 buildingId·floorNumber 반영 후, buildingGroupId·floor 컬럼 제거)
+기존에 `floor`·`buildingGroupId` 컬럼이 있던 DB는 동당 1 row 구조로 통합하는 마이그레이션이 필요합니다. 필요 시 요청하여 스크립트 생성 가능합니다.
 
 ---
 

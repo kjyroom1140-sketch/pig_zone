@@ -35,6 +35,13 @@
 
 ### 1. 서버 실행
 
+**쉽게 시작/종료** (Windows):
+- **start.bat** 더블클릭 → Express, Go API, Next.js를 각각 새 창에서 시작
+- **stop.bat** 더블클릭 → 모든 서버 종료
+- **start-servers.bat** 더블클릭 → 메뉴에서 1(창에서 시작) / 2(백그라운드) / 3(종료) 선택
+
+또는 수동 실행:
+
 ```bash
 node server.js
 ```

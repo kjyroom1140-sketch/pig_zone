@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "dsznajder.es7-react-js-snippets",
+    "golang.go",
+    "eamodio.gitlens",
+    "christian-kohler.path-intellisense",
+    "formulahendry.auto-rename-tag",
+    "usernamehw.errorlens",
+    "editorconfig.editorconfig",
+    "aaron-bond.better-comments"
+  ],
+  "unwantedRecommendations": []
+}

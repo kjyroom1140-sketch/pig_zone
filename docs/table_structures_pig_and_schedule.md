@@ -1,7 +1,7 @@
 # 테이블 컬럼 구조 정리
 
 돈군·객체·이동·작업 스케줄 관련 테이블의 컬럼 구조를 정리한 문서입니다.  
-일정 관련 테이블(schedule_item_types, schedule_items, farm_schedule_* 등)은 서버 기동 시 **Sequelize sync**로 생성됩니다. 재설계 가이드: [schedule_redesign_guide.md](./schedule_redesign_guide.md).
+일정 관련 테이블(schedule_item_types, schedule_items, farm_schedule_* 등) 구조는 models/ 및 routes/를 참고하세요.
 
 ---
 
@@ -99,7 +99,7 @@ RFID 등으로 개별 식별된 마리만 등록하는 테이블.
 | createdAt, updatedAt | TIMESTAMP | N | 생성/수정 시각 |
 
 - **모델:** `models/ScheduleItemType.js`
-- **참고:** [schedule_item_types_unified_table.md](./schedule_item_types_unified_table.md)
+- **참고:** 일정 구조는 `schedule_implementation_summary.md`, `schedule_structure_design.md`
 
 ### 4.2 schedule_task_type_structures (작업 유형 ↔ 시설 템플릿)
 
