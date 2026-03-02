@@ -3,7 +3,7 @@
 사육시설·구분·작업유형·기준을 **각 컬럼에 선택한 값(ID)**으로 저장하고, **기준내용**은 유형(시작~종료일 / 매일 / 주말 / 월 / 년)에 따라 조건 선택 후 입력한 값을 **criteria_content** 한 컬럼에 저장하는 구조입니다.
 
 **실행 순서:** DB에 새 컬럼을 추가한 뒤 앱을 사용하세요.  
-`node scripts/run_schedule_work_plans_redesign_columns.js` 실행 후 Go 서버·프론트를 띄우면 됩니다.
+`node scripts/run_sql.js scripts/schedule_work_plans_redesign_columns.sql` 실행 후 Go 서버·프론트를 띄우면 됩니다.
 
 ---
 

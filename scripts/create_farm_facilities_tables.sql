@@ -37,10 +37,12 @@ CREATE TABLE IF NOT EXISTS farm_rooms (
   "barnId" UUID NOT NULL REFERENCES farm_barns(id) ON DELETE CASCADE,
   name VARCHAR(200),
   "roomNumber" INTEGER,
+  "housingMode" VARCHAR(20) NOT NULL DEFAULT 'group',
   "sectionCount" INTEGER,
   area DOUBLE PRECISION,
   "totalCapacity" INTEGER,
   "orderIndex" INTEGER,
+  CONSTRAINT chk_farm_rooms_housing_mode CHECK ("housingMode" IN ('stall', 'group')),
   "isActive" BOOLEAN NOT NULL DEFAULT true,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()

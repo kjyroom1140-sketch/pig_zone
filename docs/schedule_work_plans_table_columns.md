@@ -69,7 +69,7 @@
 구 구조 JSON 컬럼(`structure_templates`, `schedule_sortations`, `schedule_criterias`, `schedule_jobtypes`, `details`)은 현재 API에서 사용하지 않습니다. 제거하려면:
 
 ```bash
-node scripts/run_schedule_work_plans_drop_unused_columns.js
+node scripts/run_sql.js scripts/schedule_work_plans_drop_unused_columns.sql
 ```
 
 또는 `scripts/schedule_work_plans_drop_unused_columns.sql` 내용을 PostgreSQL에서 직접 실행하세요.

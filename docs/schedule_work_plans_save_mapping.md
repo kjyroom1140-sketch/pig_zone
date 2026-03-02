@@ -7,7 +7,7 @@
 **해결**: 프로젝트 루트에서 마이그레이션 실행 후 서버 재시작 없이 다시 저장 시도.
 
 ```bash
-node scripts/run_schedule_work_plans_store_definition_ids.js
+node scripts/run_sql.js scripts/schedule_work_plans_store_definition_ids.sql
 ```
 
 실행 후 기존 `schedule_work_plans` 행의 id가 정의 id로 변환되고, FK가 정의 테이블을 참조하도록 바뀝니다.
@@ -34,7 +34,7 @@ node scripts/run_schedule_work_plans_store_definition_ids.js
 - 목록 테이블(schedule_sortations, schedule_jobtypes, schedule_criterias)의 행 id가 **아니라**
 - 각각 **구분 정의** / **작업유형 정의** / **기준 정의** 테이블의 **id** 로 저장합니다.
 
-DB 마이그레이션: `node scripts/run_schedule_work_plans_store_definition_ids.js` 실행 시 기존 목록 id 가 정의 id 로 변환되고, FK 가 정의 테이블을 참조하도록 변경됩니다.
+DB 마이그레이션: `node scripts/run_sql.js scripts/schedule_work_plans_store_definition_ids.sql` 실행 시 기존 목록 id 가 정의 id 로 변환되고, FK 가 정의 테이블을 참조하도록 변경됩니다.
 
 ---
 

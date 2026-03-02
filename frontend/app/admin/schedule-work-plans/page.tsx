@@ -1,37 +1,70 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import {
   getStructureTemplates,
-  getScheduleSortations,
-  getScheduleCriterias,
-  getScheduleJobtypes,
-  getScheduleWorkPlans,
-  createScheduleSortation,
-  createScheduleCriteria,
-  createScheduleJobtype,
-  updateScheduleSortation,
-  updateScheduleCriteria,
-  updateScheduleJobtype,
-  deleteScheduleSortation,
-  deleteScheduleCriteria,
-  deleteScheduleJobtype,
-  getScheduleSortationDefinitions,
-  createScheduleSortationDefinition,
-  updateScheduleSortationDefinition,
-  deleteScheduleSortationDefinition,
-  getScheduleJobtypeDefinitions,
-  createScheduleJobtypeDefinition,
-  updateScheduleJobtypeDefinition,
-  deleteScheduleJobtypeDefinition,
-  getScheduleCriteriaDefinitions,
-  createScheduleCriteriaDefinition,
-  updateScheduleCriteriaDefinition,
-  deleteScheduleCriteriaDefinition,
-  createScheduleWorkPlan,
-  updateScheduleWorkPlan,
-  deleteScheduleWorkPlan,
-  reorderScheduleWorkPlans,
+  getFarmStructureProduction,
+  // Admin(전역) - alias
+  getScheduleSortations as getScheduleSortationsAdmin,
+  getScheduleCriterias as getScheduleCriteriasAdmin,
+  getScheduleJobtypes as getScheduleJobtypesAdmin,
+  getScheduleWorkPlans as getScheduleWorkPlansAdmin,
+  createScheduleSortation as createScheduleSortationAdmin,
+  createScheduleCriteria as createScheduleCriteriaAdmin,
+  createScheduleJobtype as createScheduleJobtypeAdmin,
+  updateScheduleSortation as updateScheduleSortationAdmin,
+  updateScheduleCriteria as updateScheduleCriteriaAdmin,
+  updateScheduleJobtype as updateScheduleJobtypeAdmin,
+  deleteScheduleSortation as deleteScheduleSortationAdmin,
+  deleteScheduleCriteria as deleteScheduleCriteriaAdmin,
+  deleteScheduleJobtype as deleteScheduleJobtypeAdmin,
+  getScheduleSortationDefinitions as getScheduleSortationDefinitionsAdmin,
+  createScheduleSortationDefinition as createScheduleSortationDefinitionAdmin,
+  updateScheduleSortationDefinition as updateScheduleSortationDefinitionAdmin,
+  deleteScheduleSortationDefinition as deleteScheduleSortationDefinitionAdmin,
+  getScheduleJobtypeDefinitions as getScheduleJobtypeDefinitionsAdmin,
+  createScheduleJobtypeDefinition as createScheduleJobtypeDefinitionAdmin,
+  updateScheduleJobtypeDefinition as updateScheduleJobtypeDefinitionAdmin,
+  deleteScheduleJobtypeDefinition as deleteScheduleJobtypeDefinitionAdmin,
+  getScheduleCriteriaDefinitions as getScheduleCriteriaDefinitionsAdmin,
+  createScheduleCriteriaDefinition as createScheduleCriteriaDefinitionAdmin,
+  updateScheduleCriteriaDefinition as updateScheduleCriteriaDefinitionAdmin,
+  deleteScheduleCriteriaDefinition as deleteScheduleCriteriaDefinitionAdmin,
+  createScheduleWorkPlan as createScheduleWorkPlanAdmin,
+  updateScheduleWorkPlan as updateScheduleWorkPlanAdmin,
+  deleteScheduleWorkPlan as deleteScheduleWorkPlanAdmin,
+  reorderScheduleWorkPlans as reorderScheduleWorkPlansAdmin,
+  // Farm(농장)
+  getFarmScheduleSortations,
+  getFarmScheduleCriterias,
+  getFarmScheduleJobtypes,
+  getFarmScheduleWorkPlansMaster,
+  createFarmScheduleSortation,
+  createFarmScheduleCriteria,
+  createFarmScheduleJobtype,
+  updateFarmScheduleSortation,
+  updateFarmScheduleCriteria,
+  updateFarmScheduleJobtype,
+  deleteFarmScheduleSortation,
+  deleteFarmScheduleCriteria,
+  deleteFarmScheduleJobtype,
+  getFarmScheduleSortationDefinitions,
+  createFarmScheduleSortationDefinition,
+  updateFarmScheduleSortationDefinition,
+  deleteFarmScheduleSortationDefinition,
+  getFarmScheduleJobtypeDefinitions,
+  createFarmScheduleJobtypeDefinition,
+  updateFarmScheduleJobtypeDefinition,
+  deleteFarmScheduleJobtypeDefinition,
+  getFarmScheduleCriteriaDefinitions,
+  createFarmScheduleCriteriaDefinition,
+  updateFarmScheduleCriteriaDefinition,
+  deleteFarmScheduleCriteriaDefinition,
+  createFarmScheduleWorkPlanMaster,
+  updateFarmScheduleWorkPlanMaster,
+  deleteFarmScheduleWorkPlanMaster,
+  reorderFarmScheduleWorkPlansMaster,
   type StructureTemplate,
   type ScheduleSortationItem,
   type ScheduleCriteriaItem,
@@ -43,6 +76,8 @@ import {
   type CriteriaContent,
   type CriteriaContentType,
 } from '@/lib/api';
+
+const FARM_KEY = 'currentFarmId';
 
 /** JSON 문자열 또는 객체에서 표시 라벨 추출 (배열 첫 항목 name 또는 요약) */
 function labelFrom(value: string | null | undefined | unknown): string {
@@ -125,6 +160,214 @@ function workContentFrom(value: string | null | undefined): string {
 }
 
 export default function AdminScheduleWorkPlansPage() {
+  const pathname = usePathname();
+  const isFarmMode = pathname ? !pathname.startsWith('/admin') : false;
+  const [farmId, setFarmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isFarmMode) {
+      setFarmId(null);
+      return;
+    }
+    const id = typeof window !== 'undefined' ? localStorage.getItem(FARM_KEY) : null;
+    setFarmId(id);
+  }, [isFarmMode]);
+
+  // 공용 래퍼: farm 경로면 farm 스코프 API, admin 경로면 전역 API
+  const getScheduleSortations = useCallback(
+    (structureTemplateId?: number) => {
+      if (isFarmMode) return farmId ? getFarmScheduleSortations(farmId, structureTemplateId) : Promise.resolve([]);
+      return getScheduleSortationsAdmin(structureTemplateId);
+    },
+    [isFarmMode, farmId]
+  );
+  const getScheduleCriterias = useCallback(() => (isFarmMode ? (farmId ? getFarmScheduleCriterias(farmId) : Promise.resolve([])) : getScheduleCriteriasAdmin()), [isFarmMode, farmId]);
+  const getScheduleJobtypes = useCallback(() => (isFarmMode ? (farmId ? getFarmScheduleJobtypes(farmId) : Promise.resolve([])) : getScheduleJobtypesAdmin()), [isFarmMode, farmId]);
+  const getScheduleWorkPlans = useCallback(() => (isFarmMode ? (farmId ? getFarmScheduleWorkPlansMaster(farmId) : Promise.resolve([])) : getScheduleWorkPlansAdmin()), [isFarmMode, farmId]);
+
+  const getScheduleSortationDefinitions = useCallback(
+    () => (isFarmMode ? (farmId ? getFarmScheduleSortationDefinitions(farmId) : Promise.resolve([])) : getScheduleSortationDefinitionsAdmin()),
+    [isFarmMode, farmId]
+  );
+  const createScheduleSortationDefinition = useCallback(
+    (body: { name: string; sort_order?: number }) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return createFarmScheduleSortationDefinition(farmId, body);
+      }
+      return createScheduleSortationDefinitionAdmin(body);
+    },
+    [isFarmMode, farmId]
+  );
+  const updateScheduleSortationDefinition = useCallback(
+    (id: number, body: { name?: string; sort_order?: number }) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return updateFarmScheduleSortationDefinition(farmId, id, body);
+      }
+      return updateScheduleSortationDefinitionAdmin(id, body);
+    },
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleSortationDefinition = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleSortationDefinition(farmId, id);
+      }
+      return deleteScheduleSortationDefinitionAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const getScheduleJobtypeDefinitions = useCallback(
+    () => (isFarmMode ? (farmId ? getFarmScheduleJobtypeDefinitions(farmId) : Promise.resolve([])) : getScheduleJobtypeDefinitionsAdmin()),
+    [isFarmMode, farmId]
+  );
+  const createScheduleJobtypeDefinition = useCallback(
+    (body: { name: string; sort_order?: number }) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return createFarmScheduleJobtypeDefinition(farmId, body);
+      }
+      return createScheduleJobtypeDefinitionAdmin(body);
+    },
+    [isFarmMode, farmId]
+  );
+  const updateScheduleJobtypeDefinition = useCallback(
+    (id: number, body: { name?: string; sort_order?: number }) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return updateFarmScheduleJobtypeDefinition(farmId, id, body);
+      }
+      return updateScheduleJobtypeDefinitionAdmin(id, body);
+    },
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleJobtypeDefinition = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleJobtypeDefinition(farmId, id);
+      }
+      return deleteScheduleJobtypeDefinitionAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const getScheduleCriteriaDefinitions = useCallback(
+    () => (isFarmMode ? (farmId ? getFarmScheduleCriteriaDefinitions(farmId) : Promise.resolve([])) : getScheduleCriteriaDefinitionsAdmin()),
+    [isFarmMode, farmId]
+  );
+  const createScheduleCriteriaDefinition = useCallback(
+    (body: { name: string; content_type: string; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? createFarmScheduleCriteriaDefinition(farmId, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : createScheduleCriteriaDefinitionAdmin(body)),
+    [isFarmMode, farmId]
+  );
+  const updateScheduleCriteriaDefinition = useCallback(
+    (id: number, body: { name?: string; content_type?: string; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? updateFarmScheduleCriteriaDefinition(farmId, id, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : updateScheduleCriteriaDefinitionAdmin(id, body)),
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleCriteriaDefinition = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleCriteriaDefinition(farmId, id);
+      }
+      return deleteScheduleCriteriaDefinitionAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const createScheduleSortation = useCallback(
+    (body: { structure_template_id: number; sortation_definition_id?: number; sortations?: unknown; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? createFarmScheduleSortation(farmId, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : createScheduleSortationAdmin(body)),
+    [isFarmMode, farmId]
+  );
+  const updateScheduleSortation = useCallback(
+    (id: number, body: { structure_template_id?: number; sortations?: unknown; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? updateFarmScheduleSortation(farmId, id, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : updateScheduleSortationAdmin(id, body)),
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleSortation = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleSortation(farmId, id);
+      }
+      return deleteScheduleSortationAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const createScheduleJobtype = useCallback(
+    (body: { name?: string; sortation_id: number; jobtype_definition_id?: number; jobtypes?: unknown; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? createFarmScheduleJobtype(farmId, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : createScheduleJobtypeAdmin(body)),
+    [isFarmMode, farmId]
+  );
+  const updateScheduleJobtype = useCallback(
+    (id: number, body: { sortation_id?: number; jobtypes?: unknown; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? updateFarmScheduleJobtype(farmId, id, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : updateScheduleJobtypeAdmin(id, body)),
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleJobtype = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleJobtype(farmId, id);
+      }
+      return deleteScheduleJobtypeAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const createScheduleCriteria = useCallback(
+    (body: { name?: string; jobtype_id: number; criteria_definition_id?: number; criterias?: unknown; description?: string | null; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? createFarmScheduleCriteria(farmId, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : createScheduleCriteriaAdmin(body)),
+    [isFarmMode, farmId]
+  );
+  const updateScheduleCriteria = useCallback(
+    (id: number, body: { jobtype_id?: number; criterias?: unknown; description?: string | null; sort_order?: number }) =>
+      (isFarmMode ? (farmId ? updateFarmScheduleCriteria(farmId, id, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : updateScheduleCriteriaAdmin(id, body)),
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleCriteria = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleCriteria(farmId, id);
+      }
+      return deleteScheduleCriteriaAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+
+  const createScheduleWorkPlan = useCallback(
+    (body: { structure_template_id: number | null; sortation_id: number | null; jobtype_id: number | null; criteria_id: number | null; criteria_content: CriteriaContent | null; work_content?: string | null }) =>
+      (isFarmMode ? (farmId ? createFarmScheduleWorkPlanMaster(farmId, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : createScheduleWorkPlanAdmin(body)),
+    [isFarmMode, farmId]
+  );
+  const updateScheduleWorkPlan = useCallback(
+    (id: number, body: { structure_template_id?: number | null; sortation_id?: number | null; jobtype_id?: number | null; criteria_id?: number | null; criteria_content?: CriteriaContent | null; work_content?: string | null }) =>
+      (isFarmMode ? (farmId ? updateFarmScheduleWorkPlanMaster(farmId, id, body) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : updateScheduleWorkPlanAdmin(id, body)),
+    [isFarmMode, farmId]
+  );
+  const deleteScheduleWorkPlan = useCallback(
+    (id: number) => {
+      if (isFarmMode) {
+        if (!farmId) throw new Error('선택된 농장이 없습니다.');
+        return deleteFarmScheduleWorkPlanMaster(farmId, id);
+      }
+      return deleteScheduleWorkPlanAdmin(id);
+    },
+    [isFarmMode, farmId]
+  );
+  const reorderScheduleWorkPlans = useCallback(
+    (idOrder: number[]) => (isFarmMode ? (farmId ? reorderFarmScheduleWorkPlansMaster(farmId, idOrder) : Promise.reject(new Error('선택된 농장이 없습니다.'))) : reorderScheduleWorkPlansAdmin(idOrder)),
+    [isFarmMode, farmId]
+  );
+
   const [facilities, setFacilities] = useState<StructureTemplate[]>([]);
   const [facilityCategory, setFacilityCategory] = useState<'production' | 'support'>('production');
   const [selectedFacilityId, setSelectedFacilityId] = useState<number | null>(null);
@@ -263,6 +506,30 @@ export default function AdminScheduleWorkPlansPage() {
   }, [dragPlanId, dragStartIndex, dragOverIndex]);
 
   useEffect(() => {
+    if (isFarmMode) {
+      if (!farmId) {
+        setFacilities([]);
+        setLoading(false);
+        return;
+      }
+      getFarmStructureProduction(farmId)
+        .then((list) => {
+          const arr = (Array.isArray(list) ? list : []).map((x, idx) => ({
+            id: x.templateId,
+            name: x.name,
+            category: 'production',
+            weight: x.weight,
+            optimalDensity: x.optimalDensity,
+            description: x.description,
+            sortOrder: idx,
+          }));
+          setFacilities(arr);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : '시설 목록 조회 실패'))
+        .finally(() => setLoading(false));
+      return;
+    }
+
     getStructureTemplates()
       .then((list) => {
         const arr = Array.isArray(list) ? list : [];
@@ -270,7 +537,7 @@ export default function AdminScheduleWorkPlansPage() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : '시설 목록 조회 실패'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [isFarmMode, farmId]);
 
   const loadChains = useCallback(() => {
     Promise.all([getScheduleCriterias(), getScheduleJobtypes()])
@@ -279,7 +546,7 @@ export default function AdminScheduleWorkPlansPage() {
         setJobtypes(Array.isArray(jobList) ? jobList : []);
       })
       .catch(() => {});
-  }, []);
+  }, [getScheduleCriterias, getScheduleJobtypes]);
 
   useEffect(() => {
     loadChains();
@@ -301,7 +568,7 @@ export default function AdminScheduleWorkPlansPage() {
       .then((arr) => setSortations(Array.isArray(arr) ? arr : []))
       .catch(() => setSortations([]))
       .finally(() => setListLoading(false));
-  }, [selectedFacilityId]);
+  }, [selectedFacilityId, getScheduleSortations]);
 
   const loadWorkPlans = useCallback(() => {
     setWorkPlansError(null);
@@ -315,7 +582,7 @@ export default function AdminScheduleWorkPlansPage() {
         setWorkPlansError(e instanceof Error ? e.message : '작업 목록 조회 실패');
       })
       .finally(() => setWorkPlansLoading(false));
-  }, []);
+  }, [getScheduleWorkPlans]);
 
   useEffect(() => {
     loadWorkPlans();
@@ -334,7 +601,7 @@ export default function AdminScheduleWorkPlansPage() {
     setFilterSortationId('');
     setFilterJobtypeId('');
     setFilterCriteriaId('');
-  }, [filterFacilityId]);
+  }, [filterFacilityId, getScheduleSortations]);
 
   /** 시설 구분(사육/일반) 변경 시 선택된 시설이 해당 구분에 없으면 시설 필터 초기화 */
   useEffect(() => {
@@ -373,7 +640,7 @@ export default function AdminScheduleWorkPlansPage() {
     }
     if (sortationIdx < 0) return;
 
-    const selectedSortationId = facilitySortations[selectedSortationIndex]?.id ?? null;
+    const selectedSortationId = facilitySortations[sortationIdx]?.id ?? null;
     if (selectedSortationId === null) return;
     const jobtypeList = (jobtypes ?? []).filter((j) => j.sortation_id === selectedSortationId);
     const jobtypeIdx = jobtypeList.findIndex((j) => (j as { jobtype_definition_id?: number }).jobtype_definition_id === p.jobtypeId);
@@ -383,7 +650,7 @@ export default function AdminScheduleWorkPlansPage() {
     }
     if (jobtypeIdx < 0) return;
 
-    const selectedJobtypeId = jobtypeList[selectedJobtypeIndex]?.id ?? null;
+    const selectedJobtypeId = jobtypeList[jobtypeIdx]?.id ?? null;
     if (selectedJobtypeId === null) return;
     const criteriaList = (criterias ?? []).filter((c) => c.jobtype_id === selectedJobtypeId);
     const criteriaIdx = criteriaList.findIndex((c) => (c as { criteria_definition_id?: number }).criteria_definition_id === p.criteriaId);
@@ -535,7 +802,7 @@ export default function AdminScheduleWorkPlansPage() {
   /** 작업 목록에서 행 선택 시 상단 입력 폼에 채우기 (같은 폼으로 수정 가능) */
   const loadWorkPlanIntoForm = (item: ScheduleWorkPlanItem) => {
     const fac = facilities.find((f) => f.id === item.structureTemplateId);
-    if (fac?.category) setFacilityCategory(fac.category);
+    if (fac?.category === 'production' || fac?.category === 'support') setFacilityCategory(fac.category);
     setSelectedFacilityId(item.structureTemplateId ?? null);
     setPendingLoadWorkPlan(item);
   };
@@ -2140,7 +2407,7 @@ export default function AdminScheduleWorkPlansPage() {
             >
               <option value="">전체</option>
               {filterJobtypeOptions.map((j) => (
-                <option key={j.id} value={(j as ScheduleJobtypeItem).jobtype_definition_id ?? j.id}>{(j as ScheduleJobtypeItem).jobtype_name ?? labelFrom(j.jobtypes) || '—'}</option>
+                <option key={j.id} value={(j as ScheduleJobtypeItem).jobtype_definition_id ?? j.id}>{((j as ScheduleJobtypeItem).jobtype_name ?? labelFrom(j.jobtypes)) || '—'}</option>
               ))}
             </select>
           </span>
@@ -2153,7 +2420,7 @@ export default function AdminScheduleWorkPlansPage() {
             >
               <option value="">전체</option>
               {filterCriteriaOptions.map((c) => (
-                <option key={c.id} value={(c as ScheduleCriteriaItem).criteria_definition_id ?? c.id}>{(c as ScheduleCriteriaItem).criteria_name ?? labelFrom(c.criterias) || c.description || '—'}</option>
+                <option key={c.id} value={(c as ScheduleCriteriaItem).criteria_definition_id ?? c.id}>{(((c as ScheduleCriteriaItem).criteria_name ?? labelFrom(c.criterias)) || c.description || '—')}</option>
               ))}
             </select>
           </span>

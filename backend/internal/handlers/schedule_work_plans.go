@@ -23,6 +23,7 @@ func (h *Handler) ScheduleWorkPlansList(w http.ResponseWriter, r *http.Request) 
 		LEFT JOIN schedule_sortation_definitions sd ON sd.id = swp.sortation_id
 		LEFT JOIN schedule_jobtype_definitions jd ON jd.id = swp.jobtype_id
 		LEFT JOIN schedule_criteria_definitions cd ON cd.id = swp.criteria_id
+		WHERE swp."farmId" IS NULL AND COALESCE(swp.is_deleted, false) = false
 		ORDER BY COALESCE(swp.sort_order, 999999) ASC, swp.id ASC
 	`)
 	if err != nil {
@@ -85,11 +86,11 @@ func (h *Handler) ScheduleWorkPlansCreate(w http.ResponseWriter, r *http.Request
 	}
 	// 최신순: 새 항목을 맨 위에 두기 위해 sort_order를 기존 최소값 - 1 로 설정
 	var nextOrder int
-	_ = h.db.Pool.QueryRow(r.Context(), `SELECT COALESCE(MIN(sort_order), 0) - 1 FROM schedule_work_plans`).Scan(&nextOrder)
+	_ = h.db.Pool.QueryRow(r.Context(), `SELECT COALESCE(MIN(sort_order), 0) - 1 FROM schedule_work_plans WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false`).Scan(&nextOrder)
 	var id int
 	err := h.db.Pool.QueryRow(r.Context(), `
-		INSERT INTO schedule_work_plans (structure_template_id, sortation_id, jobtype_id, criteria_id, criteria_content, work_content, sort_order, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		INSERT INTO schedule_work_plans ("farmId", structure_template_id, sortation_id, jobtype_id, criteria_id, criteria_content, work_content, sort_order, is_deleted, "createdAt", "updatedAt")
+		VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, false, NOW(), NOW())
 		RETURNING id
 	`, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, nextOrder).Scan(&id)
 	if err != nil {
@@ -127,7 +128,7 @@ func (h *Handler) ScheduleWorkPlansUpdate(w http.ResponseWriter, r *http.Request
 	_, err = h.db.Pool.Exec(r.Context(), `
 		UPDATE schedule_work_plans
 		SET structure_template_id = $1, sortation_id = $2, jobtype_id = $3, criteria_id = $4, criteria_content = $5, work_content = $6, "updatedAt" = NOW()
-		WHERE id = $7
+		WHERE id = $7 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false
 	`, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기초 일정 수정 중 오류가 발생했습니다."})
@@ -144,7 +145,7 @@ func (h *Handler) ScheduleWorkPlansDelete(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 ID입니다."})
 		return
 	}
-	res, err := h.db.Pool.Exec(r.Context(), `DELETE FROM schedule_work_plans WHERE id = $1`, id)
+	res, err := h.db.Pool.Exec(r.Context(), `UPDATE schedule_work_plans SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기초 일정 삭제 중 오류가 발생했습니다."})
 		return
@@ -173,7 +174,7 @@ func (h *Handler) ScheduleWorkPlansReorder(w http.ResponseWriter, r *http.Reques
 	}
 	defer tx.Rollback(r.Context())
 	for i, id := range body.IDOrder {
-		_, err = tx.Exec(r.Context(), `UPDATE schedule_work_plans SET sort_order = $1, "updatedAt" = NOW() WHERE id = $2`, i, id)
+		_, err = tx.Exec(r.Context(), `UPDATE schedule_work_plans SET sort_order = $1, "updatedAt" = NOW() WHERE id = $2 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, i, id)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "순서 저장 실패", "detail": err.Error()})
 			return

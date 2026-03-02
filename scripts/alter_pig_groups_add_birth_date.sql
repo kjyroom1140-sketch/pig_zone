@@ -1,0 +1,3 @@
+ALTER TABLE pig_groups
+  ADD COLUMN IF NOT EXISTS birth_date DATE NULL;
+

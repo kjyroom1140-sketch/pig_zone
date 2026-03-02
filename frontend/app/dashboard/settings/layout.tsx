@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 const SETTINGS_NAV = [
   { href: '/dashboard/settings', label: '농장 정보' },
   { href: '/dashboard/settings/staff', label: '직원 관리' },
-  { href: '/dashboard/settings/schedule', label: '일정 관리' },
+  { href: '/dashboard/settings/schedule-masters', label: '일정 마스터' },
   { href: '/dashboard/settings/devices', label: '장치 관리' },
 ];
 

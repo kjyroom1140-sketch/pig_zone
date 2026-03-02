@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -36,7 +36,7 @@ export default function AdminUserFarmsPage() {
     if (typeof window !== 'undefined') {
       localStorage.setItem(FARM_KEY, farmId);
     }
-    router.push('/dashboard');
+    router.push('/farm/dashboard');
     router.refresh();
   }
 
@@ -98,7 +98,7 @@ export default function AdminUserFarmsPage() {
                       localStorage.setItem(FARM_KEY, f.id);
                       localStorage.setItem(FARM_NAME_KEY, f.farmName);
                     }
-                    router.push('/dashboard/settings');
+                    router.push('/farm/admin');
                   }}
                   title="환경 설정"
                   style={{

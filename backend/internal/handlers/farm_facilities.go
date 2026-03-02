@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"pig-farm-api/internal/middleware"
 
@@ -59,6 +60,57 @@ func (h *Handler) roomBelongsToFarm(ctx context.Context, roomID, farmID uuid.UUI
 	return err == nil
 }
 
+func (h *Handler) hasFarmRoomHousingModeColumn(ctx context.Context) bool {
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_name = 'farm_rooms'
+			  AND column_name = 'housingMode'
+		)
+	`).Scan(&exists)
+	if err != nil {
+		return false
+	}
+	return exists
+}
+
+func isBreedingOrGestationFacilityName(name string) bool {
+	v := strings.TrimSpace(name)
+	if v == "" {
+		return false
+	}
+	return strings.Contains(v, "교배사") || strings.Contains(v, "임신사")
+}
+
+func (h *Handler) roomAllowsHousingModeSelection(ctx context.Context, roomID uuid.UUID) bool {
+	var barnName sql.NullString
+	var templateName sql.NullString
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT
+			b.name,
+			st.name
+		FROM farm_rooms r
+		JOIN farm_barns b ON b.id = r."barnId"
+		LEFT JOIN structure_templates st
+			ON b."barnType" ~ '^[0-9]+$'
+			AND st.id = b."barnType"::int
+		WHERE r.id = $1
+	`, roomID).Scan(&barnName, &templateName)
+	if err != nil {
+		return false
+	}
+
+	if templateName.Valid && isBreedingOrGestationFacilityName(templateName.String) {
+		return true
+	}
+	if barnName.Valid && isBreedingOrGestationFacilityName(barnName.String) {
+		return true
+	}
+	return false
+}
+
 // FarmFacilitiesTree GET /api/farm-facilities/:farmId/tree
 // Returns buildings with nested barns -> rooms -> sections (flat nesting, no floor grouping).
 func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +118,7 @@ func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	roomHasHousingMode := h.hasFarmRoomHousingModeColumn(r.Context())
 	buildings, err := h.db.Pool.Query(r.Context(), `
 		SELECT id, name, code, "orderIndex", description, "totalFloors"
 		FROM farm_buildings WHERE "farmId" = $1 AND "isActive" = true ORDER BY "orderIndex" ASC, "createdAt" ASC
@@ -108,10 +161,17 @@ func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 					barnMap["structureTemplateId"] = tid
 				}
 			}
-			rooms, err := h.db.Pool.Query(r.Context(), `
+			roomQuery := `
 				SELECT id, name, "roomNumber", "sectionCount", area, "totalCapacity", "orderIndex"
 				FROM farm_rooms WHERE "barnId" = $1 AND "isActive" = true ORDER BY "orderIndex" ASC, "roomNumber" ASC
-			`, barnID)
+			`
+			if roomHasHousingMode {
+				roomQuery = `
+					SELECT id, name, "roomNumber", "housingMode", "sectionCount", area, "totalCapacity", "orderIndex"
+					FROM farm_rooms WHERE "barnId" = $1 AND "isActive" = true ORDER BY "orderIndex" ASC, "roomNumber" ASC
+				`
+			}
+			rooms, err := h.db.Pool.Query(r.Context(), roomQuery, barnID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load rooms"})
 				return
@@ -119,14 +179,28 @@ func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 			for rooms.Next() {
 				var roomID uuid.UUID
 				var roomName *string
+				var housingMode *string
 				var roomNum, sectionCount *int
 				var area, totalCap interface{}
 				var roomOrder *int
-				if err := rooms.Scan(&roomID, &roomName, &roomNum, &sectionCount, &area, &totalCap, &roomOrder); err != nil {
-					continue
+				if roomHasHousingMode {
+					if err := rooms.Scan(&roomID, &roomName, &roomNum, &housingMode, &sectionCount, &area, &totalCap, &roomOrder); err != nil {
+						continue
+					}
+				} else {
+					if err := rooms.Scan(&roomID, &roomName, &roomNum, &sectionCount, &area, &totalCap, &roomOrder); err != nil {
+						continue
+					}
+				}
+				var normalizedHousingMode interface{} = nil
+				if housingMode != nil && *housingMode != "" {
+					m := strings.ToLower(strings.TrimSpace(*housingMode))
+					if m == "stall" || m == "group" {
+						normalizedHousingMode = m
+					}
 				}
 				roomMap := map[string]interface{}{
-					"id": roomID.String(), "name": roomName, "roomNumber": roomNum, "sectionCount": sectionCount,
+					"id": roomID.String(), "name": roomName, "roomNumber": roomNum, "housingMode": normalizedHousingMode, "sectionCount": sectionCount,
 					"area": area, "totalCapacity": totalCap, "orderIndex": roomOrder, "sections": []map[string]interface{}{},
 				}
 				sectionRows, err := h.db.Pool.Query(r.Context(), `
@@ -303,7 +377,14 @@ func (h *Handler) FarmBarnsCreate(w http.ResponseWriter, r *http.Request) {
 		barnName = "Barn"
 	}
 	barnID := uuid.New()
-	_, err = h.db.Pool.Exec(r.Context(), `
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction begin failed"})
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	_, err = tx.Exec(r.Context(), `
 		INSERT INTO farm_barns (id, "buildingId", "farmId", name, "barnType", "floorNumber", "isActive", "createdAt", "updatedAt")
 		VALUES ($1, $2, $3, $4, NULLIF($5,''), $6, true, NOW(), NOW())
 	`, barnID, buildingID, farmID, barnName, barnType, floorNum)
@@ -316,15 +397,30 @@ func (h *Handler) FarmBarnsCreate(w http.ResponseWriter, r *http.Request) {
 		for i := 1; i <= body.RoomCount; i++ {
 			roomID := uuid.New()
 			roomName := "Room " + strconv.Itoa(i)
-			_, err = h.db.Pool.Exec(r.Context(), `
+			_, err = tx.Exec(r.Context(), `
 				INSERT INTO farm_rooms (id, "barnId", "buildingId", "farmId", name, "roomNumber", "orderIndex", "isActive", "createdAt", "updatedAt")
 				VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
 			`, roomID, barnID, buildingID, farmID, roomName, i, i)
 			if err != nil {
-				break
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "room create failed: " + err.Error()})
+				return
+			}
+			// 방 생성 시 기본 1칸 자동 생성
+			sectionID := uuid.New()
+			_, err = tx.Exec(r.Context(), `
+				INSERT INTO farm_sections (id, "roomId", "barnId", "buildingId", "farmId", name, "sectionNumber", "orderIndex", "isActive", "createdAt", "updatedAt")
+				VALUES ($1, $2, $3, $4, $5, $6, 1, 1, true, NOW(), NOW())
+			`, sectionID, roomID, barnID, buildingID, farmID, "Section 1")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section create failed: " + err.Error()})
+				return
 			}
 			roomIds = append(roomIds, roomID.String())
 		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction commit failed: " + err.Error()})
+		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id": barnID.String(), "name": barnName, "barnType": barnType, "floorNumber": floorNum,
@@ -469,6 +565,66 @@ func (h *Handler) FarmRoomsBulkCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
+	ensureAtLeastOneSection := func(roomID uuid.UUID) error {
+		var activeCount int
+		if err := tx.QueryRow(r.Context(), `
+			SELECT COUNT(1)
+			FROM farm_sections
+			WHERE "roomId" = $1
+			  AND "isActive" = true
+		`, roomID).Scan(&activeCount); err != nil {
+			return err
+		}
+		if activeCount > 0 {
+			return nil
+		}
+
+		rows, err := tx.Query(r.Context(), `
+			SELECT id
+			FROM farm_sections
+			WHERE "roomId" = $1
+			ORDER BY "sectionNumber" ASC NULLS LAST, "createdAt" ASC
+			LIMIT 1
+		`, roomID)
+		if err != nil {
+			return err
+		}
+		var existingID uuid.UUID
+		hasExisting := false
+		if rows.Next() {
+			if err := rows.Scan(&existingID); err != nil {
+				rows.Close()
+				return err
+			}
+			hasExisting = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		if hasExisting {
+			_, err = tx.Exec(r.Context(), `
+				UPDATE farm_sections
+				SET name = $1,
+					"sectionNumber" = 1,
+					"orderIndex" = 1,
+					"isActive" = true,
+					"updatedAt" = NOW()
+				WHERE id = $2
+			`, "Section 1", existingID)
+			return err
+		}
+
+		sectionID := uuid.New()
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO farm_sections (id, "roomId", "barnId", "buildingId", "farmId", name, "sectionNumber", "orderIndex", "isActive", "createdAt", "updatedAt")
+			VALUES ($1, $2, $3, $4, $5, $6, 1, 1, true, NOW(), NOW())
+		`, sectionID, roomID, barnID, buildingID, farmID, "Section 1")
+		return err
+	}
+
 	pickOne := func(number int) (roomState, bool) {
 		candidates := byNumber[number]
 		if len(candidates) == 0 {
@@ -497,6 +653,10 @@ func (h *Handler) FarmRoomsBulkCreate(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "room update failed: " + err.Error()})
 				return
 			}
+			if err := ensureAtLeastOneSection(chosen.ID); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section ensure failed: " + err.Error()})
+				return
+			}
 			kept[chosen.ID] = struct{}{}
 			roomIds = append(roomIds, chosen.ID.String())
 			continue
@@ -509,6 +669,10 @@ func (h *Handler) FarmRoomsBulkCreate(w http.ResponseWriter, r *http.Request) {
 			VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
 		`, roomID, barnID, buildingID, farmID, roomName, i, i); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "room create failed: " + err.Error()})
+			return
+		}
+		if err := ensureAtLeastOneSection(roomID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section create failed: " + err.Error()})
 			return
 		}
 		kept[roomID] = struct{}{}
@@ -562,14 +726,37 @@ func (h *Handler) FarmRoomUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name *string `json:"name"`
+		Name        *string `json:"name"`
+		HousingMode *string `json:"housingMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "??嚥?援?????Β?????嶺뚮Ĳ?뉛쭛????낇돲??"})
 		return
 	}
 	if body.Name != nil {
-		_, _ = h.db.Pool.Exec(r.Context(), `UPDATE farm_rooms SET name = $1, "updatedAt" = NOW() WHERE id = $2`, *body.Name, roomID)
+		if _, err := h.db.Pool.Exec(r.Context(), `UPDATE farm_rooms SET name = $1, "updatedAt" = NOW() WHERE id = $2`, *body.Name, roomID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "room name update failed"})
+			return
+		}
+	}
+	if body.HousingMode != nil {
+		if !h.hasFarmRoomHousingModeColumn(r.Context()) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "housingMode 컬럼이 없습니다. 마이그레이션을 먼저 적용하세요."})
+			return
+		}
+		mode := strings.ToLower(strings.TrimSpace(*body.HousingMode))
+		if mode != "stall" && mode != "group" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "housingMode는 stall 또는 group 이어야 합니다."})
+			return
+		}
+		if mode == "stall" && !h.roomAllowsHousingModeSelection(r.Context(), roomID) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "운영방식은 교배사/임신사에서만 stall 선택이 가능합니다."})
+			return
+		}
+		if _, err := h.db.Pool.Exec(r.Context(), `UPDATE farm_rooms SET "housingMode" = $1, "updatedAt" = NOW() WHERE id = $2`, mode, roomID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "housingMode update failed"})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "???쒓낯???筌???????"})
 }
@@ -712,7 +899,8 @@ func (h *Handler) FarmSectionsBulkCreate(w http.ResponseWriter, r *http.Request)
 		}
 
 		sectionID := uuid.New()
-		sectionName := strconv.Itoa(i) + "踰덉뭏"
+		// Keep ASCII default label to avoid locale/encoding mojibake.
+		sectionName := "Section " + strconv.Itoa(i)
 		if _, err = tx.Exec(r.Context(), `
 			INSERT INTO farm_sections (id, "roomId", "barnId", "buildingId", "farmId", name, "sectionNumber", "orderIndex", "isActive", "createdAt", "updatedAt")
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW(), NOW())

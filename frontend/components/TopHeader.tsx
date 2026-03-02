@@ -1,8 +1,8 @@
-﻿'use client';
+'use client';
 
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { me, logout, updateAdminUser, getFarm, type UpdateUserBody } from '@/lib/api';
+import { me, logout, updateAdminUser, getFarm, getFarms, type UpdateUserBody } from '@/lib/api';
 
 const formStyle = {
   marginBottom: 12,
@@ -15,19 +15,20 @@ const formStyle = {
 };
 
 type UserShape = { id: string; fullName: string; systemRole: string; username: string; email?: string | null; phone?: string | null };
+const HEADER_TEXT_FONT_SIZE = 16;
 
 const DASHBOARD_NAV = [
-  { href: '/dashboard', label: '실시간 모니터링' },
-  { href: '/dashboard/schedule', label: '일정' },
-  { href: '/dashboard/move', label: '이동' },
-  { href: '/dashboard/report', label: '리포트' },
-  { href: '/dashboard/settings', label: '환경 설정' },
+  { href: '/farm/dashboard', label: '실시간모니터링' },
+  { href: '/farm/schedule', label: '일정 관리' },
+  { href: '/farm/move', label: '이동 관리' },
+  { href: '/farm/report', label: '보고서' },
+  { href: '/farm/admin', label: '환경 설정' },
 ];
 
 export default function TopHeader() {
   const router = useRouter();
   const pathname = usePathname();
-  const isDashboard = pathname != null && pathname.startsWith('/dashboard');
+  const isDashboard = pathname != null && pathname.startsWith('/farm');
   const [user, setUser] = useState<UserShape | null>(null);
   const [position, setPosition] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -41,6 +42,7 @@ export default function TopHeader() {
   const [profileError, setProfileError] = useState('');
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [currentFarmName, setCurrentFarmName] = useState<string | null>(null);
+  const [canChangeFarm, setCanChangeFarm] = useState(false);
 
   function loadUser() {
     return me()
@@ -70,7 +72,7 @@ export default function TopHeader() {
       return;
     }
     // 환경 설정 페이지에서 중복 호출을 막기 위해 농장명 자동 조회를 건너뜀
-    if (pathname?.startsWith('/dashboard/settings')) {
+    if (pathname?.startsWith('/farm/admin')) {
       setCurrentFarmName(null);
       return;
     }
@@ -89,6 +91,19 @@ export default function TopHeader() {
       setCurrentFarmName(null);
     }
   }, [isDashboard, pathname]);
+
+  useEffect(() => {
+    if (!isDashboard || !user) {
+      setCanChangeFarm(false);
+      return;
+    }
+    getFarms()
+      .then(({ farms }) => {
+        const ownedFarmCount = farms.filter((farm) => farm.ownerId === user.id).length;
+        setCanChangeFarm(ownedFarmCount >= 2);
+      })
+      .catch(() => setCanChangeFarm(false));
+  }, [isDashboard, user]);
 
   async function handleLogout() {
     await logout();
@@ -149,14 +164,15 @@ export default function TopHeader() {
           flexShrink: 0,
           flexWrap: 'wrap',
           gap: 16,
-          position: 'relative',
-          zIndex: 30,
+          position: 'sticky',
+          top: 0,
+          zIndex: 40,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 150 }}>
           <button
             type="button"
-            onClick={() => router.push(user ? '/dashboard' : '/')}
+            onClick={() => router.push(user ? '/farm/dashboard' : '/')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -185,7 +201,7 @@ export default function TopHeader() {
                     borderRadius: 6,
                     border: 'none',
                     cursor: 'pointer',
-                    fontSize: 14,
+                    fontSize: HEADER_TEXT_FONT_SIZE,
                     fontWeight: pathname === href ? 600 : 500,
                     color: pathname === href ? '#fff' : 'rgba(255,255,255,0.85)',
                     background: pathname === href ? 'rgba(255,255,255,0.15)' : 'transparent',
@@ -206,7 +222,7 @@ export default function TopHeader() {
                     {currentFarmName && (
                       <span
                         style={{
-                          fontSize: 18,
+                          fontSize: HEADER_TEXT_FONT_SIZE,
                           fontWeight: 600,
                           color: '#fff',
                           marginRight: 12,
@@ -218,21 +234,23 @@ export default function TopHeader() {
                         {currentFarmName}
                       </span>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => router.push('/select-farm')}
-                      style={{
-                        fontSize: 14,
-                        color: 'rgba(255,255,255,0.9)',
-                        border: 'none',
-                        background: 'none',
-                        cursor: 'pointer',
-                        padding: '6px 10px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      농장 변경
-                    </button>
+                    {canChangeFarm && (
+                      <button
+                        type="button"
+                        onClick={() => router.push('/select-farm')}
+                        style={{
+                          fontSize: HEADER_TEXT_FONT_SIZE,
+                          color: 'rgba(255,255,255,0.9)',
+                          border: 'none',
+                          background: 'none',
+                          cursor: 'pointer',
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                        }}
+                      >
+                        농장 변경
+                      </button>
+                    )}
                   </>
                 )}
                 {user.systemRole === 'system_admin' ? (
@@ -241,7 +259,7 @@ export default function TopHeader() {
                       type="button"
                       onClick={() => router.push('/admin')}
                       style={{
-                        fontSize: 16,
+                        fontSize: HEADER_TEXT_FONT_SIZE,
                         fontWeight: 600,
                         color: '#e2e8f0',
                         border: 'none',
@@ -257,7 +275,7 @@ export default function TopHeader() {
                       type="button"
                       onClick={openProfileModal}
                       style={{
-                        fontSize: 16,
+                        fontSize: HEADER_TEXT_FONT_SIZE,
                         fontWeight: 600,
                         color: '#e2e8f0',
                         background: 'none',
@@ -272,10 +290,10 @@ export default function TopHeader() {
                   </>
                 ) : (
                   <>
-                    <span style={{ fontSize: 16, fontWeight: 500, color: '#e2e8f0' }}>
+                    <span style={{ fontSize: HEADER_TEXT_FONT_SIZE, fontWeight: 500, color: '#e2e8f0' }}>
                       {user.systemRole === 'super_admin' ? '운영관리자' : (position ?? '-')}
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 500, color: '#e2e8f0' }}>{user.fullName}</span>
+                    <span style={{ fontSize: HEADER_TEXT_FONT_SIZE, fontWeight: 500, color: '#e2e8f0' }}>{user.fullName}</span>
                   </>
                 )}
                 <button
@@ -283,7 +301,7 @@ export default function TopHeader() {
                   onClick={handleLogout}
                   style={{
                     padding: '6px 12px',
-                    fontSize: 14,
+                    fontSize: HEADER_TEXT_FONT_SIZE,
                     background: 'transparent',
                     color: '#e2e8f0',
                     border: '1px solid #64748b',
@@ -299,7 +317,7 @@ export default function TopHeader() {
                 type="button"
                 onClick={() => router.push('/login')}
                 style={{
-                  fontSize: 14,
+                  fontSize: HEADER_TEXT_FONT_SIZE,
                   color: '#e2e8f0',
                   background: 'transparent',
                   cursor: 'pointer',

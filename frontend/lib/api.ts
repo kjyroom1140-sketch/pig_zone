@@ -249,6 +249,563 @@ export async function reorderScheduleWorkPlans(idOrder: number[]): Promise<void>
   }
 }
 
+// ---------------------------
+// Farm: Admin과 동일한 일정 마스터 CRUD (farm scoped)
+// - /api/farms/:farmId/schedule-*
+// - work plans master: /api/farms/:farmId/schedule-work-plans-master
+// ---------------------------
+
+export type FarmScheduleWorkPlanMasterItem = ScheduleWorkPlanItem;
+
+export async function getFarmScheduleWorkPlansMaster(farmId: string): Promise<FarmScheduleWorkPlanMasterItem[]> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master`), { credentials: 'include' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '목록 조회 실패'}: ${err.detail}` : (err.error || '목록 조회 실패');
+    throw new Error(msg);
+  }
+  return Array.isArray(data) ? (data as FarmScheduleWorkPlanMasterItem[]) : [];
+}
+
+export type FarmScheduleExecutionItem = {
+  id: string;
+  farmId: string;
+  workPlanId: number;
+  sectionId?: string | null;
+  executionType: 'birth' | 'move' | 'inspection' | string;
+  scheduledDate: string; // YYYY-MM-DD
+  status: 'pending' | 'completed' | 'skipped' | 'cancelled' | string;
+  completedAt?: string | null;
+  completedBy?: string | null;
+  resultRefType?: string | null;
+  resultRefId?: string | null;
+  idempotencyKey?: string | null;
+  memo?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workContent?: string | null;
+  sortationName?: string | null;
+  jobtypeName?: string | null;
+  criteriaName?: string | null;
+};
+
+export async function getFarmScheduleExecutions(
+  farmId: string,
+  params?: {
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+    executionType?: string;
+    sectionId?: string;
+    limit?: number;
+  }
+): Promise<FarmScheduleExecutionItem[]> {
+  const qs = new URLSearchParams();
+  if (params?.startDate) qs.set('startDate', params.startDate);
+  if (params?.endDate) qs.set('endDate', params.endDate);
+  if (params?.status) qs.set('status', params.status);
+  if (params?.executionType) qs.set('executionType', params.executionType);
+  if (params?.sectionId) qs.set('sectionId', params.sectionId);
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return fetchApi(`/farms/${farmId}/schedule-executions${suffix}`);
+}
+
+export type CreateFarmScheduleExecutionBody = {
+  workPlanId: number;
+  sectionId: string;
+  executionType: 'birth' | 'move' | 'inspection';
+  scheduledDate: string; // YYYY-MM-DD
+  idempotencyKey?: string;
+  memo?: string;
+};
+
+export async function createFarmScheduleExecution(
+  farmId: string,
+  body: CreateFarmScheduleExecutionBody
+): Promise<FarmScheduleExecutionItem> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '예정 등록 실패'}: ${err.detail}` : (err.error || '예정 등록 실패');
+    throw new Error(msg);
+  }
+  return data as FarmScheduleExecutionItem;
+}
+
+export type CompleteFarmScheduleExecutionBirthBody = {
+  bornCount: number;
+  sectionId?: string;
+  groupNo?: string;
+  originSowId?: string;
+  memo?: string;
+  idempotencyKey: string;
+};
+
+export type CompleteFarmScheduleExecutionBirthResult = {
+  id: string;
+  status: 'completed' | string;
+  resultRefType?: string;
+  resultRefId?: string;
+  groupId?: string;
+  groupNo?: string;
+  message?: string;
+};
+
+export async function completeFarmScheduleExecutionBirth(
+  farmId: string,
+  executionId: string,
+  body: CompleteFarmScheduleExecutionBirthBody
+): Promise<CompleteFarmScheduleExecutionBirthResult> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/${executionId}/complete-birth`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '분만 완료 실패'}: ${err.detail}` : (err.error || '분만 완료 실패');
+    throw new Error(msg);
+  }
+  return data as CompleteFarmScheduleExecutionBirthResult;
+}
+
+export type CompleteFarmScheduleExecutionMoveLine = {
+  sourceGroupId: string;
+  targetGroupId?: string;
+  fromSectionId?: string;
+  toSectionId: string;
+  headCount: number;
+  lineType?: string;
+};
+
+export type CompleteFarmScheduleExecutionMoveBody = {
+  eventType: 'full' | 'partial' | 'split' | 'merge' | 'entry' | 'shipment';
+  memo?: string;
+  idempotencyKey: string;
+  lines: CompleteFarmScheduleExecutionMoveLine[];
+};
+
+export type CompleteFarmScheduleExecutionMoveResult = {
+  id: string;
+  status: 'completed' | string;
+  resultRefType?: string;
+  resultRefId?: string;
+  lines?: number;
+  message?: string;
+};
+
+export async function completeFarmScheduleExecutionMove(
+  farmId: string,
+  executionId: string,
+  body: CompleteFarmScheduleExecutionMoveBody
+): Promise<CompleteFarmScheduleExecutionMoveResult> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/${executionId}/complete-move`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '이동 완료 실패'}: ${err.detail}` : (err.error || '이동 완료 실패');
+    throw new Error(msg);
+  }
+  return data as CompleteFarmScheduleExecutionMoveResult;
+}
+
+export type DirectCompleteFarmScheduleExecutionBirthBody = CompleteFarmScheduleExecutionBirthBody & {
+  workPlanId: number;
+  scheduledDate: string; // YYYY-MM-DD
+};
+
+export async function directCompleteFarmScheduleExecutionBirth(
+  farmId: string,
+  body: DirectCompleteFarmScheduleExecutionBirthBody
+): Promise<CompleteFarmScheduleExecutionBirthResult> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/direct-complete-birth`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '분만 바로 완료 실패'}: ${err.detail}` : (err.error || '분만 바로 완료 실패');
+    throw new Error(msg);
+  }
+  return data as CompleteFarmScheduleExecutionBirthResult;
+}
+
+export type DirectCompleteFarmScheduleExecutionMoveBody = CompleteFarmScheduleExecutionMoveBody & {
+  workPlanId: number;
+  scheduledDate: string; // YYYY-MM-DD
+};
+
+export async function directCompleteFarmScheduleExecutionMove(
+  farmId: string,
+  body: DirectCompleteFarmScheduleExecutionMoveBody
+): Promise<CompleteFarmScheduleExecutionMoveResult> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/direct-complete-move`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '이동 바로 완료 실패'}: ${err.detail}` : (err.error || '이동 바로 완료 실패');
+    throw new Error(msg);
+  }
+  return data as CompleteFarmScheduleExecutionMoveResult;
+}
+
+export type FarmPigGroupItem = {
+  id: string;
+  farmId: string;
+  groupNo: string;
+  rootGroupId?: string | null;
+  currentSectionId?: string | null;
+  headCount: number;
+  status: string;
+  createdReason: string;
+  parentGroupId?: string | null;
+  memo?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getFarmPigGroups(farmId: string): Promise<FarmPigGroupItem[]> {
+  return fetchApi(`/farms/${farmId}/pig-groups`);
+}
+
+export async function createFarmScheduleWorkPlanMaster(
+  farmId: string,
+  body: {
+    structure_template_id: number | null;
+    sortation_id: number | null;
+    jobtype_id: number | null;
+    criteria_id: number | null;
+    criteria_content: CriteriaContent | null;
+    work_content?: string | null;
+  }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '기초 일정 추가 실패'}: ${err.detail}` : (err.error || '기초 일정 추가 실패');
+    throw new Error(msg);
+  }
+  return data as { id: number };
+}
+
+export async function updateFarmScheduleWorkPlanMaster(
+  farmId: string,
+  id: number,
+  body: {
+    structure_template_id?: number | null;
+    sortation_id?: number | null;
+    jobtype_id?: number | null;
+    criteria_id?: number | null;
+    criteria_content?: CriteriaContent | null;
+    work_content?: string | null;
+  }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '기초 일정 수정 실패');
+  }
+}
+
+export async function deleteFarmScheduleWorkPlanMaster(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master/${id}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '기초 일정 삭제 실패');
+  }
+}
+
+export async function reorderFarmScheduleWorkPlansMaster(farmId: string, idOrder: number[]): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master/reorder`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ id_order: idOrder }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '순서 변경 실패');
+  }
+}
+
+export type FarmScheduleSortationItem = ScheduleSortationItem;
+export async function getFarmScheduleSortations(farmId: string, structureTemplateId?: number): Promise<FarmScheduleSortationItem[]> {
+  const q = structureTemplateId != null ? `?structure_template_id=${structureTemplateId}` : '';
+  return fetchApi(`/farms/${farmId}/schedule-sortations${q}`);
+}
+export async function createFarmScheduleSortation(
+  farmId: string,
+  body: { structure_template_id: number; sortation_definition_id?: number; sortations?: unknown; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortations`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '구분 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleSortation(
+  farmId: string,
+  id: number,
+  body: { structure_template_id?: number; sortations?: unknown; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortations/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleSortation(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortations/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '구분 삭제 실패');
+  }
+}
+
+export type FarmScheduleSortationDefinitionItem = ScheduleSortationDefinitionItem;
+export async function getFarmScheduleSortationDefinitions(farmId: string): Promise<FarmScheduleSortationDefinitionItem[]> {
+  return fetchApi(`/farms/${farmId}/schedule-sortation-definitions`);
+}
+export async function createFarmScheduleSortationDefinition(
+  farmId: string,
+  body: { name: string; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortation-definitions`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '구분 정의 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleSortationDefinition(
+  farmId: string,
+  id: number,
+  body: { name?: string; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortation-definitions/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleSortationDefinition(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-sortation-definitions/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '구분 정의 삭제 실패');
+  }
+}
+
+export type FarmScheduleJobtypeItem = ScheduleJobtypeItem;
+export async function getFarmScheduleJobtypes(farmId: string): Promise<FarmScheduleJobtypeItem[]> {
+  return fetchApi(`/farms/${farmId}/schedule-jobtypes`);
+}
+export async function createFarmScheduleJobtype(
+  farmId: string,
+  body: { name?: string; sortation_id: number; jobtype_definition_id?: number; jobtypes?: unknown; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtypes`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '작업유형 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleJobtype(
+  farmId: string,
+  id: number,
+  body: { sortation_id?: number; jobtypes?: unknown; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtypes/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleJobtype(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtypes/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '작업유형 삭제 실패');
+  }
+}
+
+export type FarmScheduleJobtypeDefinitionItem = ScheduleJobtypeDefinitionItem;
+export async function getFarmScheduleJobtypeDefinitions(farmId: string): Promise<FarmScheduleJobtypeDefinitionItem[]> {
+  return fetchApi(`/farms/${farmId}/schedule-jobtype-definitions`);
+}
+export async function createFarmScheduleJobtypeDefinition(
+  farmId: string,
+  body: { name: string; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtype-definitions`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '작업유형 정의 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleJobtypeDefinition(
+  farmId: string,
+  id: number,
+  body: { name?: string; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtype-definitions/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleJobtypeDefinition(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-jobtype-definitions/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '작업유형 정의 삭제 실패');
+  }
+}
+
+export type FarmScheduleCriteriaItem = ScheduleCriteriaItem;
+export async function getFarmScheduleCriterias(farmId: string): Promise<FarmScheduleCriteriaItem[]> {
+  return fetchApi(`/farms/${farmId}/schedule-criterias`);
+}
+export async function createFarmScheduleCriteria(
+  farmId: string,
+  body: { name?: string; jobtype_id: number; criteria_definition_id?: number; criterias?: unknown; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criterias`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '기준 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleCriteria(
+  farmId: string,
+  id: number,
+  body: { jobtype_id?: number; criterias?: unknown; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criterias/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleCriteria(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criterias/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '기준 삭제 실패');
+  }
+}
+
+export type FarmScheduleCriteriaDefinitionItem = ScheduleCriteriaDefinitionItem;
+export async function getFarmScheduleCriteriaDefinitions(farmId: string): Promise<FarmScheduleCriteriaDefinitionItem[]> {
+  return fetchApi(`/farms/${farmId}/schedule-criteria-definitions`);
+}
+export async function createFarmScheduleCriteriaDefinition(
+  farmId: string,
+  body: { name: string; content_type: string; sort_order?: number }
+): Promise<{ id: number }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criteria-definitions`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '기준 정의 추가 실패');
+  return data as { id: number };
+}
+export async function updateFarmScheduleCriteriaDefinition(
+  farmId: string,
+  id: number,
+  body: { name?: string; content_type?: string; sort_order?: number }
+): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criteria-definitions/${id}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || '수정 실패');
+}
+export async function deleteFarmScheduleCriteriaDefinition(farmId: string, id: number): Promise<void> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-criteria-definitions/${id}`), { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || '기준 정의 삭제 실패');
+  }
+}
+
 /** 구분. 시설(structure_template_id)별 필터 가능. sort_order: 표시 순서. sortation_name은 definition 조인 시 채워짐. sortation_definition_id: 정의 테이블 id (기초 일정 저장 시 사용) */
 export type ScheduleSortationItem = { id: number; structure_template_id: number | null; sortations: string | null; sortation_name?: string | null; sortation_definition_id?: number | null; sort_order?: number };
 export async function getScheduleSortations(structureTemplateId?: number): Promise<ScheduleSortationItem[]> {
@@ -584,6 +1141,126 @@ export async function getFarm(farmId: string): Promise<{ id: string; farmName: s
   return data as unknown as { id: string; farmName: string; farmCode: string; status: string };
 }
 
+export type FarmOpeningStatus = {
+  farmId: string;
+  initialized: boolean;
+  farmInitializedAt?: string | null;
+};
+
+export async function getFarmOpeningStatus(farmId: string): Promise<FarmOpeningStatus> {
+  return fetchApi(`/farms/${farmId}/bootstrap/opening/status`);
+}
+
+export type OpeningSowInput = {
+  sowNo: string;
+  status?: 'active' | 'inactive' | 'culled' | 'sold';
+  parity?: number;
+  birthDate?: string;
+  memo?: string;
+};
+
+export type OpeningGroupInput = {
+  groupNo?: string;
+  headCount: number;
+  status?: 'active' | 'closed' | 'merged';
+  createdReason?: 'birth' | 'split' | 'manual' | 'merge';
+  memo?: string;
+};
+
+export type OpeningSectionInput = {
+  sectionId: string;
+  sows?: OpeningSowInput[];
+  groups?: OpeningGroupInput[];
+};
+
+export type OpeningPayload = {
+  items: OpeningSectionInput[];
+};
+
+export type OpeningSectionSaveKind = 'breedingGestation' | 'farrowing' | 'other';
+
+export type OpeningSectionSaveBody = {
+  kind: OpeningSectionSaveKind;
+  entryDate: string; // YYYY-MM-DD
+  sows?: OpeningSowInput[];
+  group?: {
+    headCount: number;
+    birthDate?: string; // YYYY-MM-DD
+    ageDays?: number;
+    status?: 'active' | 'closed' | 'merged';
+    createdReason?: 'birth' | 'split' | 'manual' | 'merge';
+    memo?: string;
+  };
+};
+
+export type OpeningSectionSaveResult = {
+  saved: boolean;
+  farmId: string;
+  sectionId: string;
+  kind: OpeningSectionSaveKind | string;
+  entryDate: string;
+  sowCount: number;
+  headCount: number;
+  initialized: boolean;
+  groupId?: string;
+  groupNo?: string;
+  birthDate?: string;
+};
+
+export type OpeningValidateResult = {
+  farmId: string;
+  valid: boolean;
+  errors: string[];
+  sections: number;
+  totalSows: number;
+  totalGroups: number;
+  totalHeadCount: number;
+};
+
+export async function validateFarmOpening(
+  farmId: string,
+  body: OpeningPayload
+): Promise<OpeningValidateResult> {
+  return fetchApi(`/farms/${farmId}/bootstrap/opening/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export type OpeningCommitResult = {
+  farmId: string;
+  initialized: boolean;
+  initializedAt: string;
+  sections: number;
+  totalSows: number;
+  totalGroups: number;
+  totalHeadCount: number;
+};
+
+export async function commitFarmOpening(
+  farmId: string,
+  body: OpeningPayload
+): Promise<OpeningCommitResult> {
+  return fetchApi(`/farms/${farmId}/bootstrap/opening/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function saveFarmOpeningSection(
+  farmId: string,
+  sectionId: string,
+  body: OpeningSectionSaveBody
+): Promise<OpeningSectionSaveResult> {
+  return fetchApi(`/farms/${farmId}/bootstrap/opening/sections/${sectionId}/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getFarmStructureProduction(farmId: string): Promise<{ id: string; templateId: number; name: string; weight?: string; optimalDensity?: number; description?: string }[]> {
   return fetchApi(`/farm-structure/${farmId}/production`);
 }
@@ -595,8 +1272,12 @@ export async function saveFarmStructureProduction(farmId: string, templateIds: n
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ templateIds }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data as { error?: string }).error || '농장 구조 저장 실패');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error || '농장 구조 저장 실패'}: ${err.detail}` : (err.error || '농장 구조 저장 실패');
+    throw new Error(msg);
+  }
   return data as { message: string };
 }
 
@@ -618,6 +1299,7 @@ export type FarmRoom = {
   id: string;
   name?: string | null;
   roomNumber?: number | null;
+  housingMode?: 'stall' | 'group' | string | null;
   sectionCount?: number | null;
   area?: unknown;
   totalCapacity?: unknown;
@@ -646,6 +1328,17 @@ export type FarmBuilding = {
 
 export async function getFarmFacilitiesTree(farmId: string): Promise<FarmBuilding[]> {
   return fetchApi(`/farm-facilities/${farmId}/tree`, { cache: 'no-store' });
+}
+
+export type SectionInventoryBalanceItem = {
+  farmId: string;
+  sectionId: string;
+  headCount: number;
+  updatedAt: string;
+};
+
+export async function getFarmSectionInventoryBalances(farmId: string): Promise<SectionInventoryBalanceItem[]> {
+  return fetchApi(`/farms/${farmId}/section-inventory/balances`);
 }
 
 export async function createFarmBuilding(
@@ -724,7 +1417,7 @@ export async function createFarmRoomsBulk(
 export async function updateFarmRoom(
   farmId: string,
   roomId: string,
-  body: { name?: string }
+  body: { name?: string; housingMode?: 'stall' | 'group' }
 ): Promise<{ message: string }> {
   return fetchApi(`/farm-facilities/${farmId}/rooms/${roomId}`, {
     method: 'PUT',
@@ -749,8 +1442,103 @@ export async function createFarmSectionsBulk(
   });
 }
 
-export async function getFarmStaff(farmId: string): Promise<{ userFarmId: string; userId: string; username?: string; fullName?: string; email?: string; phone?: string; role: string; department?: string; position?: string }[]> {
+export type FarmStaffItem = {
+  userFarmId: string;
+  userId: string;
+  username?: string;
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  role: string;
+  department?: string;
+  position?: string;
+  employmentType?: string;
+  hireDate?: string;
+  resignDate?: string;
+  isActive: boolean;
+};
+
+export async function getFarmStaff(farmId: string): Promise<FarmStaffItem[]> {
   return fetchApi(`/farms/${farmId}/staff`);
+}
+
+export async function createFarmStaff(
+  farmId: string,
+  body: {
+    account: {
+      username: string;
+      password: string;
+      fullName: string;
+      phone?: string;
+      email?: string;
+    };
+    staff?: {
+      role?: string;
+      department?: string;
+      position?: string;
+      employmentType?: string;
+      hireDate?: string;
+    };
+  }
+): Promise<{ user: { id: string; username: string; fullName: string }; userFarm: { id: string } }> {
+  return fetchApi(`/farms/${farmId}/staff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function linkFarmStaff(
+  farmId: string,
+  body: {
+    userId: string;
+    role?: string;
+    department?: string;
+    position?: string;
+    employmentType?: string;
+    hireDate?: string;
+  }
+): Promise<{ userFarm: { id: string } }> {
+  return fetchApi(`/farms/${farmId}/staff/link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateFarmStaff(
+  farmId: string,
+  userFarmId: string,
+  body: {
+    user?: {
+      fullName?: string;
+      phone?: string;
+      email?: string;
+    };
+    staff?: {
+      role?: string;
+      department?: string;
+      position?: string;
+      employmentType?: string;
+      hireDate?: string;
+      resignDate?: string;
+    };
+  }
+): Promise<{ message: string }> {
+  return fetchApi(`/farms/${farmId}/staff/${userFarmId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteFarmStaff(
+  farmId: string,
+  userFarmId: string
+): Promise<{ success: boolean; message: string }> {
+  return fetchApi(`/farms/${farmId}/staff/${userFarmId}`, {
+    method: 'DELETE',
+  });
 }
 
 export type StructureTemplate = {
@@ -852,63 +1640,3 @@ export async function reorderStructureTemplate(id: number, direction: 'up' | 'do
   }
   if (!res.ok) throw new Error((data as { error?: string }).error || '순서 변경 실패');
 }
-
-export async function getFarmScheduleTaskTypes(farmId: string): Promise<{ id: number; name: string; code?: string; category?: string; sortOrder: number }[]> {
-  return fetchApi(`/farms/${farmId}/schedule-task-types`);
-}
-
-export async function getFarmScheduleBasisTypes(farmId: string): Promise<{ id: number; name: string; code?: string; targetType?: string; sortOrder: number }[]> {
-  return fetchApi(`/farms/${farmId}/schedule-basis-types`);
-}
-
-export async function getFarmScheduleItems(
-  farmId: string,
-  params?: { targetType?: string; structureTemplateId?: string; taskTypeId?: string; basisTypeId?: string }
-): Promise<FarmScheduleItem[]> {
-  const q = new URLSearchParams(params as Record<string, string>).toString();
-  return fetchApi(`/farms/${farmId}/schedule-items${q ? `?${q}` : ''}`);
-}
-
-export type FarmScheduleItem = {
-  id: number;
-  farmId: string;
-  targetType: string;
-  structureTemplateId?: number;
-  basisTypeId?: number;
-  ageLabel?: string;
-  dayMin?: number;
-  dayMax?: number;
-  taskTypeId: number;
-  sortOrder: number;
-  isActive: boolean;
-  recurrenceType?: string;
-  recurrenceInterval?: number;
-  recurrenceWeekdays?: string;
-  recurrenceMonthDay?: number;
-  structureTemplate?: { id: number; name: string; category?: string };
-  taskType?: { id: number; code?: string; name: string; category?: string };
-  basisTypeRef?: { id: number; code?: string; name: string; targetType?: string };
-};
-
-export async function getFarmScheduleWorkPlans(
-  farmId: string,
-  from: string,
-  to: string
-): Promise<FarmScheduleWorkPlan[]> {
-  return fetchApi(`/farms/${farmId}/schedule-work-plans?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-}
-
-export type FarmScheduleWorkPlan = {
-  id: number;
-  farmId: string;
-  farmScheduleItemId: number;
-  taskTypeCategory?: string;
-  roomId?: string;
-  sectionId?: string;
-  plannedStartDate: string;
-  plannedEndDate: string;
-  entrySource?: string;
-  entryCount?: number;
-  completedDate?: string;
-  scheduleItem?: { id: number; taskType?: { id: number; code?: string; name: string; category?: string } };
-};

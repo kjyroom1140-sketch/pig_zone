@@ -19,7 +19,7 @@ func (h *Handler) ScheduleSortationsList(w http.ResponseWriter, r *http.Request)
 		       (NULLIF(ss.sortations::jsonb->0->>'sortation_definition_id', '')::int) AS sortation_definition_id
 		FROM schedule_sortations ss
 		LEFT JOIN schedule_sortation_definitions sd ON sd.id = (NULLIF(ss.sortations::jsonb->0->>'sortation_definition_id', '')::int)
-		WHERE 1=1
+		WHERE ss."farmId" IS NULL AND COALESCE(ss.is_deleted, false) = false
 	`
 	args := []interface{}{}
 	argNum := 1
@@ -68,7 +68,7 @@ func (h *Handler) ScheduleSortationsList(w http.ResponseWriter, r *http.Request)
 }
 
 func scheduleSortationsListFallback(h *Handler, w http.ResponseWriter, r *http.Request) {
-	q := `SELECT id, structure_template_id, sortations::text, COALESCE(sort_order, 0) FROM schedule_sortations WHERE 1=1`
+q := `SELECT id, structure_template_id, sortations::text, COALESCE(sort_order, 0) FROM schedule_sortations WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false`
 	args := []interface{}{}
 	if idStr := r.URL.Query().Get("structure_template_id"); idStr != "" {
 		if id, err := strconv.Atoi(idStr); err == nil {
@@ -159,7 +159,7 @@ func (h *Handler) ScheduleSortationsCreate(w http.ResponseWriter, r *http.Reques
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_sortations (structure_template_id, sortations, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.StructureTemplateID, []byte(sortationsJSON), sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_sortations ("farmId", structure_template_id, sortations, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.StructureTemplateID, []byte(sortationsJSON), sortOrder).Scan(&id)
 	if err != nil {
 		log.Printf("[schedule_sortations] INSERT failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "생성 실패", "detail": err.Error()})
@@ -188,7 +188,7 @@ func (h *Handler) ScheduleSortationsUpdate(w http.ResponseWriter, r *http.Reques
 	var structID *int
 	var sortations *string
 	var currentOrder *int
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT structure_template_id, sortations, sort_order FROM schedule_sortations WHERE id = $1`, id).Scan(&structID, &sortations, &currentOrder); err != nil {
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT structure_template_id, sortations, sort_order FROM schedule_sortations WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id).Scan(&structID, &sortations, &currentOrder); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "구분을 찾을 수 없습니다."})
 		return
 	}
@@ -209,7 +209,7 @@ func (h *Handler) ScheduleSortationsUpdate(w http.ResponseWriter, r *http.Reques
 	if body.SortOrder != nil {
 		orderVal = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_sortations SET structure_template_id = $1, sortations = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4`, structID, sortationsPayload, orderVal, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_sortations SET structure_template_id = $1, sortations = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, structID, sortationsPayload, orderVal, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "수정 실패"})
 		return
@@ -227,9 +227,9 @@ func (h *Handler) ScheduleSortationsDelete(w http.ResponseWriter, r *http.Reques
 	}
 	ctx := r.Context()
 	// 하위 기준 삭제(해당 구분의 작업유형에 속한 기준) → 작업유형 삭제 → 구분 삭제
-	_, _ = h.db.Pool.Exec(ctx, `DELETE FROM schedule_criterias WHERE jobtype_id IN (SELECT id FROM schedule_jobtypes WHERE sortation_id = $1)`, id)
-	_, _ = h.db.Pool.Exec(ctx, `DELETE FROM schedule_jobtypes WHERE sortation_id = $1`, id)
-	res, err := h.db.Pool.Exec(ctx, `DELETE FROM schedule_sortations WHERE id = $1`, id)
+	_, _ = h.db.Pool.Exec(ctx, `UPDATE schedule_criterias SET is_deleted = true, "updatedAt" = NOW() WHERE jobtype_id IN (SELECT id FROM schedule_jobtypes WHERE sortation_id = $1 AND "farmId" IS NULL) AND "farmId" IS NULL`, id)
+	_, _ = h.db.Pool.Exec(ctx, `UPDATE schedule_jobtypes SET is_deleted = true, "updatedAt" = NOW() WHERE sortation_id = $1 AND "farmId" IS NULL`, id)
+	res, err := h.db.Pool.Exec(ctx, `UPDATE schedule_sortations SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "구분 삭제 중 오류가 발생했습니다."})
 		return
@@ -244,7 +244,7 @@ func (h *Handler) ScheduleSortationsDelete(w http.ResponseWriter, r *http.Reques
 // ScheduleSortationDefinitionsList GET /api/schedule-sortation-definitions
 // 테이블이 없으면 빈 배열 반환 (500 대신 200)
 func (h *Handler) ScheduleSortationDefinitionsList(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, COALESCE(sort_order, 0) FROM schedule_sortation_definitions ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
+	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, COALESCE(sort_order, 0) FROM schedule_sortation_definitions WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusOK, []map[string]interface{}{})
@@ -287,7 +287,7 @@ func (h *Handler) ScheduleSortationDefinitionsCreate(w http.ResponseWriter, r *h
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_sortation_definitions (name, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, NOW(), NOW()) RETURNING id`, body.Name, sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_sortation_definitions ("farmId", name, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, false, NOW(), NOW()) RETURNING id`, body.Name, sortOrder).Scan(&id)
 	if err != nil {
 		log.Printf("[schedule_sortation_definitions] INSERT failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "생성 실패", "detail": err.Error()})
@@ -328,7 +328,7 @@ func (h *Handler) ScheduleSortationDefinitionsUpdate(w http.ResponseWriter, r *h
 	if body.SortOrder != nil {
 		sortOrder = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_sortation_definitions SET name = $1, sort_order = $2, "updatedAt" = NOW() WHERE id = $3`, name, sortOrder, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_sortation_definitions SET name = $1, sort_order = $2, "updatedAt" = NOW() WHERE id = $3 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, name, sortOrder, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "구분 정의 테이블이 없습니다. 스크립트로 테이블을 생성해 주세요."})
@@ -348,7 +348,7 @@ func (h *Handler) ScheduleSortationDefinitionsDelete(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 ID입니다."})
 		return
 	}
-	res, err := h.db.Pool.Exec(r.Context(), `DELETE FROM schedule_sortation_definitions WHERE id = $1`, id)
+	res, err := h.db.Pool.Exec(r.Context(), `UPDATE schedule_sortation_definitions SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "구분 정의 테이블이 없습니다. 스크립트로 테이블을 생성해 주세요."})
@@ -373,6 +373,7 @@ func (h *Handler) ScheduleCriteriasList(w http.ResponseWriter, r *http.Request) 
 		       (NULLIF(sc.criterias::jsonb->0->>'criteria_definition_id', '')::int) AS criteria_definition_id
 		FROM schedule_criterias sc
 		LEFT JOIN schedule_criteria_definitions d ON d.id = (NULLIF(sc.criterias::jsonb->0->>'criteria_definition_id', '')::int)
+		WHERE sc."farmId" IS NULL AND COALESCE(sc.is_deleted, false) = false
 		ORDER BY COALESCE(sc.sort_order, 0) ASC, sc.id ASC
 	`
 	rows, err := h.db.Pool.Query(r.Context(), q)
@@ -411,7 +412,7 @@ func (h *Handler) ScheduleCriteriasList(w http.ResponseWriter, r *http.Request) 
 }
 
 func scheduleCriteriasListFallback(h *Handler, w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, jobtype_id, criterias::text, COALESCE(sort_order, 0) FROM schedule_criterias ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
+	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, jobtype_id, criterias::text, COALESCE(sort_order, 0) FROM schedule_criterias WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusOK, []interface{}{})
@@ -488,11 +489,11 @@ func (h *Handler) ScheduleCriteriasCreate(w http.ResponseWriter, r *http.Request
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criterias (jobtype_id, criterias, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.JobtypeID, []byte(criteriasJSON), sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criterias ("farmId", jobtype_id, criterias, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.JobtypeID, []byte(criteriasJSON), sortOrder).Scan(&id)
 	if err != nil {
 		log.Printf("[schedule_criterias] INSERT failed: %v", err)
 		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "column") {
-			err2 := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criterias (jobtype_id, criterias, sort_order, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.JobtypeID, []byte(criteriasJSON), sortOrder).Scan(&id)
+			err2 := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criterias ("farmId", jobtype_id, criterias, sort_order, is_deleted, created_at, updated_at) VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.JobtypeID, []byte(criteriasJSON), sortOrder).Scan(&id)
 			if err2 != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "생성 실패", "detail": err2.Error()})
 				return
@@ -525,7 +526,7 @@ func (h *Handler) ScheduleCriteriasUpdate(w http.ResponseWriter, r *http.Request
 	var jobtypeID *int
 	var criterias *string
 	var currentOrder *int
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT jobtype_id, criterias, sort_order FROM schedule_criterias WHERE id = $1`, id).Scan(&jobtypeID, &criterias, &currentOrder); err != nil {
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT jobtype_id, criterias, sort_order FROM schedule_criterias WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id).Scan(&jobtypeID, &criterias, &currentOrder); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "기준을 찾을 수 없습니다."})
 		return
 	}
@@ -546,7 +547,7 @@ func (h *Handler) ScheduleCriteriasUpdate(w http.ResponseWriter, r *http.Request
 	if body.SortOrder != nil {
 		orderVal = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_criterias SET jobtype_id = $1, criterias = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4`, jobtypeID, criteriasPayload, orderVal, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_criterias SET jobtype_id = $1, criterias = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, jobtypeID, criteriasPayload, orderVal, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "수정 실패"})
 		return
@@ -562,7 +563,7 @@ func (h *Handler) ScheduleCriteriasDelete(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 ID입니다."})
 		return
 	}
-	res, err := h.db.Pool.Exec(r.Context(), `DELETE FROM schedule_criterias WHERE id = $1`, id)
+	res, err := h.db.Pool.Exec(r.Context(), `UPDATE schedule_criterias SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기준 삭제 중 오류가 발생했습니다."})
 		return
@@ -578,7 +579,7 @@ func (h *Handler) ScheduleCriteriasDelete(w http.ResponseWriter, r *http.Request
 // 테이블/컬럼이 없거나 조회 실패 시 500 대신 빈 배열 반환
 func (h *Handler) ScheduleCriteriaDefinitionsList(w http.ResponseWriter, r *http.Request) {
 	emptyList := []map[string]interface{}{}
-	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, content_type, COALESCE(sort_order, 0) FROM schedule_criteria_definitions ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
+	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, content_type, COALESCE(sort_order, 0) FROM schedule_criteria_definitions WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
 	if err != nil {
 		log.Printf("[schedule_criteria_definitions] list failed: %v", err)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -628,12 +629,12 @@ func (h *Handler) ScheduleCriteriaDefinitionsCreate(w http.ResponseWriter, r *ht
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criteria_definitions (name, content_type, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.Name, body.ContentType, sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criteria_definitions ("farmId", name, content_type, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.Name, body.ContentType, sortOrder).Scan(&id)
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "does not exist") || strings.Contains(errStr, "column") {
 			// snake_case 컬럼(created_at, updated_at) 테이블이면 재시도
-			err2 := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criteria_definitions (name, content_type, sort_order, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.Name, body.ContentType, sortOrder).Scan(&id)
+			err2 := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_criteria_definitions ("farmId", name, content_type, sort_order, is_deleted, created_at, updated_at) VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.Name, body.ContentType, sortOrder).Scan(&id)
 			if err2 == nil {
 				writeJSON(w, http.StatusCreated, map[string]interface{}{"id": id})
 				return
@@ -672,7 +673,7 @@ func (h *Handler) ScheduleCriteriaDefinitionsUpdate(w http.ResponseWriter, r *ht
 	}
 	var name, contentType string
 	var sortOrder int
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT name, content_type, COALESCE(sort_order, 0) FROM schedule_criteria_definitions WHERE id = $1`, id).Scan(&name, &contentType, &sortOrder); err != nil {
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT name, content_type, COALESCE(sort_order, 0) FROM schedule_criteria_definitions WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id).Scan(&name, &contentType, &sortOrder); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "기준 정의 테이블이 없습니다. scripts/run_create_schedule_criteria_definitions.js 로 테이블을 생성해 주세요."})
 			return
@@ -689,7 +690,7 @@ func (h *Handler) ScheduleCriteriaDefinitionsUpdate(w http.ResponseWriter, r *ht
 	if body.SortOrder != nil {
 		sortOrder = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_criteria_definitions SET name = $1, content_type = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4`, name, contentType, sortOrder, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_criteria_definitions SET name = $1, content_type = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, name, contentType, sortOrder, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "기준 정의 테이블이 없습니다. scripts/run_create_schedule_criteria_definitions.js 로 테이블을 생성해 주세요."})
@@ -709,7 +710,7 @@ func (h *Handler) ScheduleCriteriaDefinitionsDelete(w http.ResponseWriter, r *ht
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 ID입니다."})
 		return
 	}
-	res, err := h.db.Pool.Exec(r.Context(), `DELETE FROM schedule_criteria_definitions WHERE id = $1`, id)
+	res, err := h.db.Pool.Exec(r.Context(), `UPDATE schedule_criteria_definitions SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "기준 정의 테이블이 없습니다. scripts/run_create_schedule_criteria_definitions.js 로 테이블을 생성해 주세요."})
@@ -734,6 +735,7 @@ func (h *Handler) ScheduleJobtypesList(w http.ResponseWriter, r *http.Request) {
 		       (NULLIF(sj.jobtypes::jsonb->0->>'jobtype_definition_id', '')::int) AS jobtype_definition_id
 		FROM schedule_jobtypes sj
 		LEFT JOIN schedule_jobtype_definitions jd ON jd.id = (NULLIF(sj.jobtypes::jsonb->0->>'jobtype_definition_id', '')::int)
+		WHERE sj."farmId" IS NULL AND COALESCE(sj.is_deleted, false) = false
 		ORDER BY COALESCE(sj.sort_order, 0) ASC, sj.id ASC
 	`
 	rows, err := h.db.Pool.Query(r.Context(), q)
@@ -773,7 +775,7 @@ func (h *Handler) ScheduleJobtypesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func scheduleJobtypesListFallback(h *Handler, w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, sortation_id, jobtypes::text, COALESCE(sort_order, 0) FROM schedule_jobtypes ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
+	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, sortation_id, jobtypes::text, COALESCE(sort_order, 0) FROM schedule_jobtypes WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "목록 조회 실패"})
 		return
@@ -844,7 +846,7 @@ func (h *Handler) ScheduleJobtypesCreate(w http.ResponseWriter, r *http.Request)
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_jobtypes (sortation_id, jobtypes, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`, body.SortationID, []byte(jobtypesJSON), sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_jobtypes ("farmId", sortation_id, jobtypes, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, $3, false, NOW(), NOW()) RETURNING id`, body.SortationID, []byte(jobtypesJSON), sortOrder).Scan(&id)
 	if err != nil {
 		log.Printf("[schedule_jobtypes] INSERT failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "생성 실패", "detail": err.Error()})
@@ -873,7 +875,7 @@ func (h *Handler) ScheduleJobtypesUpdate(w http.ResponseWriter, r *http.Request)
 	var sortationID *int
 	var jobtypes *string
 	var currentOrder *int
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT sortation_id, jobtypes, sort_order FROM schedule_jobtypes WHERE id = $1`, id).Scan(&sortationID, &jobtypes, &currentOrder); err != nil {
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT sortation_id, jobtypes, sort_order FROM schedule_jobtypes WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id).Scan(&sortationID, &jobtypes, &currentOrder); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "작업유형을 찾을 수 없습니다."})
 		return
 	}
@@ -894,7 +896,7 @@ func (h *Handler) ScheduleJobtypesUpdate(w http.ResponseWriter, r *http.Request)
 	if body.SortOrder != nil {
 		orderVal = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_jobtypes SET sortation_id = $1, jobtypes = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4`, sortationID, jobtypesPayload, orderVal, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_jobtypes SET sortation_id = $1, jobtypes = $2, sort_order = $3, "updatedAt" = NOW() WHERE id = $4 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, sortationID, jobtypesPayload, orderVal, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "수정 실패"})
 		return
@@ -911,8 +913,8 @@ func (h *Handler) ScheduleJobtypesDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ctx := r.Context()
-	_, _ = h.db.Pool.Exec(ctx, `DELETE FROM schedule_criterias WHERE jobtype_id = $1`, id)
-	res, err := h.db.Pool.Exec(ctx, `DELETE FROM schedule_jobtypes WHERE id = $1`, id)
+	_, _ = h.db.Pool.Exec(ctx, `UPDATE schedule_criterias SET is_deleted = true, "updatedAt" = NOW() WHERE jobtype_id = $1 AND "farmId" IS NULL`, id)
+	res, err := h.db.Pool.Exec(ctx, `UPDATE schedule_jobtypes SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "작업유형 삭제 중 오류가 발생했습니다."})
 		return
@@ -926,7 +928,7 @@ func (h *Handler) ScheduleJobtypesDelete(w http.ResponseWriter, r *http.Request)
 
 // ScheduleJobtypeDefinitionsList GET /api/schedule-jobtype-definitions
 func (h *Handler) ScheduleJobtypeDefinitionsList(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, COALESCE(sort_order, 0) FROM schedule_jobtype_definitions ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
+	rows, err := h.db.Pool.Query(r.Context(), `SELECT id, name, COALESCE(sort_order, 0) FROM schedule_jobtype_definitions WHERE "farmId" IS NULL AND COALESCE(is_deleted, false) = false ORDER BY COALESCE(sort_order, 0) ASC, id ASC`)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusOK, []map[string]interface{}{})
@@ -969,7 +971,7 @@ func (h *Handler) ScheduleJobtypeDefinitionsCreate(w http.ResponseWriter, r *htt
 		sortOrder = *body.SortOrder
 	}
 	var id int
-	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_jobtype_definitions (name, sort_order, "createdAt", "updatedAt") VALUES ($1, $2, NOW(), NOW()) RETURNING id`, body.Name, sortOrder).Scan(&id)
+	err := h.db.Pool.QueryRow(r.Context(), `INSERT INTO schedule_jobtype_definitions ("farmId", name, sort_order, is_deleted, "createdAt", "updatedAt") VALUES (NULL, $1, $2, false, NOW(), NOW()) RETURNING id`, body.Name, sortOrder).Scan(&id)
 	if err != nil {
 		log.Printf("[schedule_jobtype_definitions] INSERT failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "생성 실패", "detail": err.Error()})
@@ -996,7 +998,7 @@ func (h *Handler) ScheduleJobtypeDefinitionsUpdate(w http.ResponseWriter, r *htt
 	}
 	var name string
 	var sortOrder int
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT name, COALESCE(sort_order, 0) FROM schedule_jobtype_definitions WHERE id = $1`, id).Scan(&name, &sortOrder); err != nil {
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT name, COALESCE(sort_order, 0) FROM schedule_jobtype_definitions WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id).Scan(&name, &sortOrder); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "작업유형 정의 테이블이 없습니다. 스크립트로 테이블을 생성해 주세요."})
 			return
@@ -1010,7 +1012,7 @@ func (h *Handler) ScheduleJobtypeDefinitionsUpdate(w http.ResponseWriter, r *htt
 	if body.SortOrder != nil {
 		sortOrder = *body.SortOrder
 	}
-	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_jobtype_definitions SET name = $1, sort_order = $2, "updatedAt" = NOW() WHERE id = $3`, name, sortOrder, id)
+	_, err = h.db.Pool.Exec(r.Context(), `UPDATE schedule_jobtype_definitions SET name = $1, sort_order = $2, "updatedAt" = NOW() WHERE id = $3 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, name, sortOrder, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "작업유형 정의 테이블이 없습니다. 스크립트로 테이블을 생성해 주세요."})
@@ -1030,7 +1032,7 @@ func (h *Handler) ScheduleJobtypeDefinitionsDelete(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 ID입니다."})
 		return
 	}
-	res, err := h.db.Pool.Exec(r.Context(), `DELETE FROM schedule_jobtype_definitions WHERE id = $1`, id)
+	res, err := h.db.Pool.Exec(r.Context(), `UPDATE schedule_jobtype_definitions SET is_deleted = true, "updatedAt" = NOW() WHERE id = $1 AND "farmId" IS NULL AND COALESCE(is_deleted, false) = false`, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "작업유형 정의 테이블이 없습니다. 스크립트로 테이블을 생성해 주세요."})

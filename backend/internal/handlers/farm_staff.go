@@ -160,6 +160,17 @@ func (h *Handler) FarmStaffCreate(w http.ResponseWriter, r *http.Request) {
 	if body.Staff.Role != nil {
 		role = *body.Staff.Role
 	}
+	if role == "farm_admin" {
+		exists, checkErr := h.hasActiveFarmAdmin(r.Context(), farmID, nil)
+		if checkErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "직원 등록 중 오류가 발생했습니다."})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "농장관리자는 농장당 1명만 등록할 수 있습니다."})
+			return
+		}
+	}
 	empType := "full_time"
 	if body.Staff.EmploymentType != nil {
 		empType = *body.Staff.EmploymentType
@@ -215,11 +226,23 @@ func (h *Handler) FarmStaffUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var userId uuid.UUID
-	if err := h.db.Pool.QueryRow(r.Context(), `SELECT "userId" FROM user_farms WHERE id = $1 AND "farmId" = $2 AND "isActive" = true`, userFarmID, farmID).Scan(&userId); err != nil {
+	var currentRole string
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT "userId", role FROM user_farms WHERE id = $1 AND "farmId" = $2 AND "isActive" = true`, userFarmID, farmID).Scan(&userId, &currentRole); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "해당 농장의 직원 정보를 찾을 수 없습니다."})
 		return
 	}
 	if body.Staff != nil {
+		if body.Staff.Role != nil && *body.Staff.Role == "farm_admin" && currentRole != "farm_admin" {
+			exists, checkErr := h.hasActiveFarmAdmin(r.Context(), farmID, &userFarmID)
+			if checkErr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "수정 중 오류가 발생했습니다."})
+				return
+			}
+			if exists {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "농장관리자는 농장당 1명만 등록할 수 있습니다."})
+				return
+			}
+		}
 		_, _ = h.db.Pool.Exec(r.Context(), `UPDATE user_farms SET role = COALESCE($1, role), department = $2, position = $3, "employmentType" = COALESCE($4, "employmentType"), "hireDate" = $5, "resignDate" = $6, "updatedAt" = NOW() WHERE id = $7`,
 			body.Staff.Role, body.Staff.Department, body.Staff.Position, body.Staff.EmploymentType, body.Staff.HireDate, body.Staff.ResignDate, userFarmID)
 	}
@@ -312,6 +335,17 @@ func (h *Handler) FarmStaffLink(w http.ResponseWriter, r *http.Request) {
 	if body.Role != nil {
 		role = *body.Role
 	}
+	if role == "farm_admin" {
+		exists, checkErr := h.hasActiveFarmAdmin(r.Context(), farmID, nil)
+		if checkErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기존 직원을 이 농장에 추가하는 중 오류가 발생했습니다."})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "농장관리자는 농장당 1명만 등록할 수 있습니다."})
+			return
+		}
+	}
 	empType := "full_time"
 	if body.EmploymentType != nil {
 		empType = *body.EmploymentType
@@ -336,4 +370,26 @@ func (h *Handler) canManageFarmStaff(ctx context.Context, claims *middleware.Cla
 	var role string
 	err := h.db.Pool.QueryRow(ctx, `SELECT role FROM user_farms WHERE "userId" = $1 AND "farmId" = $2 AND "isActive" = true`, claims.UserID, farmID).Scan(&role)
 	return err == nil && role == "farm_admin"
+}
+
+func (h *Handler) hasActiveFarmAdmin(ctx context.Context, farmID uuid.UUID, excludeUserFarmID *uuid.UUID) (bool, error) {
+	var exists bool
+	var exclude interface{}
+	if excludeUserFarmID != nil {
+		exclude = *excludeUserFarmID
+	}
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM user_farms
+			WHERE "farmId" = $1
+			  AND "isActive" = true
+			  AND role = 'farm_admin'
+			  AND ($2::uuid IS NULL OR id <> $2)
+		)
+	`, farmID, exclude).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }

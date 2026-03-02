@@ -23,7 +23,7 @@
    아래 중 하나로 JSON 컬럼을 JSONB로 바꿉니다.
 
    ```bash
-   node scripts/run_schedule_masters_json_to_jsonb.js
+   node scripts/run_sql.js scripts/schedule_masters_json_columns_to_jsonb.sql
    ```
 
    또는 PostgreSQL에서 `scripts/schedule_masters_json_columns_to_jsonb.sql` 내용을 직접 실행.

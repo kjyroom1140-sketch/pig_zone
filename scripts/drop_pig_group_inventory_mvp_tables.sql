@@ -1,0 +1,15 @@
+BEGIN;
+
+DROP TABLE IF EXISTS schedule_executions CASCADE;
+DROP TABLE IF EXISTS shipment_lines CASCADE;
+DROP TABLE IF EXISTS shipment_events CASCADE;
+DROP TABLE IF EXISTS pig_group_lineage_edges CASCADE;
+DROP TABLE IF EXISTS farrowing_events CASCADE;
+DROP TABLE IF EXISTS sows CASCADE;
+DROP TABLE IF EXISTS section_inventory_balance CASCADE;
+DROP TABLE IF EXISTS section_inventory_ledger CASCADE;
+DROP TABLE IF EXISTS pig_movement_lines CASCADE;
+DROP TABLE IF EXISTS pig_movement_events CASCADE;
+DROP TABLE IF EXISTS pig_groups CASCADE;
+
+COMMIT;
