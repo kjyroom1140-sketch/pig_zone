@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -111,6 +111,7 @@ export default function DashboardSettingsFarmPage() {
       return;
     }
 
+    // 사육시설 선택: 체크박스 목록 = structure_templates (category=production), 체크 상태 = farm_structure
     Promise.all([
       getFarms().then(({ farms }) => {
         const found = farms.find((f) => f.id === farmId);
@@ -135,15 +136,32 @@ export default function DashboardSettingsFarmPage() {
           setTemplatesLoaded(true);
         })
         .catch(() => setTemplatesLoaded(true)),
-      getFarmStructureProduction(farmId).then((list) => {
-        const arr = Array.isArray(list) ? list : [];
-        const ids = arr
-          .map((s) => Number((s as { templateId?: unknown }).templateId))
-          .filter((id) => Number.isFinite(id));
-        const idSet = new Set(ids);
-        setSelectedTemplateIds(idSet);
-        setSavedTemplateIds(new Set(idSet));
-      }),
+      getFarmStructureProduction(farmId)
+        .then((list) => {
+          // API는 배열을 그대로 반환. 래핑된 응답({ data: [...] })도 허용
+          const rawList = Array.isArray(list)
+            ? list
+            : (list && typeof list === 'object' && 'data' in list && Array.isArray((list as { data: unknown }).data))
+              ? (list as { data: unknown[] }).data
+              : [];
+          const ids = rawList
+            .map((s) => {
+              if (!s || typeof s !== 'object') return null;
+              const o = s as Record<string, unknown>;
+              const raw = o.templateId ?? o.template_id;
+              const n = typeof raw === 'number' ? raw : Number(raw);
+              return Number.isFinite(n) ? n : null;
+            })
+            .filter((id): id is number => id != null);
+          const idSet = new Set(ids);
+          setSelectedTemplateIds(idSet);
+          setSavedTemplateIds(new Set(idSet));
+        })
+        .catch((_err) => {
+          // GET 실패(401/403/네트워크) 시 체크 해제됨. 권한 확인 또는 네트워크 탭에서 /api/farm-structure/:farmId/production 응답 확인
+          setSelectedTemplateIds(new Set());
+          setSavedTemplateIds(new Set());
+        }),
     ])
       .catch((e) => {
         setError(e instanceof Error ? e.message : '농장 정보를 불러오지 못했습니다.');
@@ -176,8 +194,9 @@ export default function DashboardSettingsFarmPage() {
     if (!farm) return;
     setSaveError('');
     setSaving(true);
+    const idsToSave = Array.from(selectedTemplateIds);
     updateFarm(farm.id, form)
-      .then(() => saveFarmStructureProduction(farm.id, Array.from(selectedTemplateIds)))
+      .then(() => saveFarmStructureProduction(farm.id, idsToSave))
       .then(() => {
         setFarm((prev) => (prev ? { ...prev, ...form } : null));
         setSavedTemplateIds(new Set(selectedTemplateIds));
@@ -186,7 +205,9 @@ export default function DashboardSettingsFarmPage() {
           localStorage.setItem(FARM_NAME_KEY, form.farmName);
         }
       })
-      .catch((e) => setSaveError(e instanceof Error ? e.message : '저장 실패'))
+      .catch((e) => {
+        setSaveError(e instanceof Error ? e.message : '저장 실패');
+      })
       .finally(() => setSaving(false));
   }
 
@@ -520,6 +541,7 @@ export default function DashboardSettingsFarmPage() {
         productionTemplates={productionTemplates}
         hasSavedProductionSelection={savedTemplateIds.size > 0}
         selectedProductionTemplateIds={Array.from(savedTemplateIds)}
+        onProductionOrderSaved={(orderedIds) => setSavedTemplateIds(new Set(orderedIds))}
       />
     </div>
   );

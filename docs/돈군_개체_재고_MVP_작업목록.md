@@ -26,6 +26,8 @@
 - 방 편집은 `운영방식` 버튼 -> 통합 모달(방식 선택 + 개수 입력) UX로 운영한다.
 - 운영방식 선택은 **교배사/임신사만 허용**하고, 그 외 사육시설은 **칸 갯수 변경만 허용**한다.
 - API는 비대상 시설의 `housing_mode=stall` 저장 요청을 차단한다.
+- 이동/분만 실행건의 위치 단위는 **칸(section)** 으로 고정하며, 캘린더 표시도 `section_id + scheduled_date` 일치 셀에만 노출한다.
+- 방(room) 레벨 텍스트는 구조/요약 용도로만 사용하고 실행건(예정/완료)으로 취급하지 않는다.
 
 ### 일정 실행 파이프라인 (고정)
 
@@ -113,7 +115,33 @@
 - [x] `MVP-082` 섹션 단위 초기값 저장 API 구현 (`POST /bootstrap/opening/sections/:sectionId/save`)
 - [x] `MVP-083` 초기값 저장 시 `entry` 이동이력 반영 (`pig_movement_events/lines`)
 - [x] `MVP-084` 초기입력 모달에 `전입일` + `출생일/일령` 입력 및 계산 UI 반영
-- [ ] `MVP-085` 초기값 저장 결과를 `schedule_executions(completed)`에 자동 반영
+- [x] `MVP-085` 초기값 저장 결과를 `schedule_executions(completed)`에 자동 반영
+- [x] `MVP-086` opening 데이터 기준 후속 예정 자동 생성 로직 추가 (`schedule_work_plans -> schedule_executions(pending)`, idempotent)
+- [x] `MVP-087` opening 기존 데이터 동기화 API 추가 (`POST /api/farms/:farmId/schedule-executions/sync-opening`)
+- [x] `MVP-088` `/farm/schedule` 조회 전 opening 동기화 호출 + 방(room) 행 실행 텍스트 제거(섹션 셀만 표시)
+
+---
+
+## 최근 진행상태 (2026-02-28)
+
+- `schedule_work_plans` 규칙을 기준으로 opening 돈군의 후속 실행건(`pending`)을 자동 생성하도록 백엔드 반영 완료.
+- `criteria_content` 해석 범위를 확장해 `start_day/startDay/end_day/endDay/start_date/startDate/end_date/endDate`까지 처리.
+- 기존에 저장된 opening 데이터도 재저장 없이 반영되도록 `sync-opening` API를 추가하고, 일정 페이지 조회 시 선동기화 연동 완료.
+- 캘린더 정책을 section 기준으로 고정: 실행건은 `section_id + scheduled_date` 일치 셀에서만 표시, room 행은 구조/요약 전용.
+- 컴파일/타입체크 통과: backend `go test ./...`, frontend `npx tsc --noEmit`.
+
+## 다음 작업 (우선순위)
+
+1. **동기화 가시성 강화**
+   - `sync-opening` 결과(생성/스킵 건수) UI 노출 및 수동 재동기화 버튼 추가.
+2. **규칙 해석 고도화**
+   - `criteria_content`의 `weekly/monthly/yearly/count` 유형까지 날짜 생성 로직 확장.
+3. **돈군 단위 연결 강화**
+   - `schedule_executions`에 `pig_group_id` 정식 연결(컬럼/인덱스/응답) 검토 및 적용.
+4. **백필/운영 도구 정리**
+   - 운영 반영용 백필 SQL/Go 커맨드 표준화(`sync-opening` 대량 실행/검증 포함).
+5. **검증 항목 우선 수행**
+   - `MVP-075`, `MVP-076`, `MVP-077`(상태전이/idempotency/opening 정합성) 테스트 케이스 먼저 완료.
 
 ---
 
@@ -123,7 +151,7 @@
 - [ ] `MVP-071` 정합성 테스트 (원장 합계 == 현재고, 음수 방지)
 - [ ] `MVP-072` 농장 격리 테스트 (`farm_id` 크로스 접근 차단)
 - [ ] `MVP-073` 성능 테스트 (재귀 조회/이력 목록 인덱스 검증)
-- [ ] `MVP-074` 배포 체크리스트 정리 (백업/마이그레이션/롤백)
+- [x] `MVP-074` 배포 체크리스트 정리 (백업/마이그레이션/롤백)
 - [ ] `MVP-075` 상태 전이 테스트 (`pending -> completed`, 중복 완료 방지)
 - [ ] `MVP-076` 재처리/idempotency 테스트 (동일 key 재호출 안전성)
 - [ ] `MVP-077` opening 정합성 테스트 (opening IN 합계 == balance 초기값)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,10 +52,11 @@ type openingSectionSaveGroupInput struct {
 }
 
 type openingSectionSaveBody struct {
-	Kind      string                        `json:"kind"`
-	EntryDate string                        `json:"entryDate"`
-	Sows      []openingSowInput             `json:"sows"`
-	Group     *openingSectionSaveGroupInput `json:"group"`
+	Kind            string                        `json:"kind"`
+	EntryDate       string                        `json:"entryDate"`
+	Sows            []openingSowInput             `json:"sows"`
+	Group           *openingSectionSaveGroupInput `json:"group"`
+	ReplaceExisting bool                          `json:"replaceExisting"`
 }
 
 func normalizeSowStatus(v *string) string {
@@ -181,6 +184,263 @@ func generateOpeningGroupNo(farmID uuid.UUID, sectionID uuid.UUID, seq int) stri
 	return "OP-" + farmPart + "-" + sectionPart + "-" + ts + "-" + strconv.Itoa(seq)
 }
 
+const openingAutoWorkContent = "재고두수등록(초기값)"
+const openingAutoWorkContentLegacy = "[AUTO] opening 초기값 저장"
+
+var errOpeningSectionHasNonOpeningData = errors.New("opening section has non-opening ledger data")
+
+type openingSectionDeleteSummary struct {
+	LedgerRowsDeleted            int64
+	MovementLineRowsDeleted      int64
+	MovementEventRowsDeleted     int64
+	GroupRowsDeleted             int64
+	ScheduleExecutionRowsDeleted int64
+	SowRowsDetached              int64
+}
+
+func collectOpeningEventIDsTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT event_id::text
+		FROM section_inventory_ledger
+		WHERE farm_id = $1
+		  AND section_id = $2
+		  AND ref_type = 'opening'
+		  AND event_id IS NOT NULL
+	`, farmID, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, err
+		}
+		id, err := uuid.Parse(strings.TrimSpace(idStr))
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func collectOpeningGroupIDsTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT pig_group_id::text
+		FROM section_inventory_ledger
+		WHERE farm_id = $1
+		  AND section_id = $2
+		  AND ref_type = 'opening'
+		  AND pig_group_id IS NOT NULL
+	`, farmID, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, err
+		}
+		id, err := uuid.Parse(strings.TrimSpace(idStr))
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func recomputeSectionBalanceTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) error {
+	if !hasTableTx(ctx, tx, "section_inventory_balance") {
+		return nil
+	}
+	var nextCount int32 = 0
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN direction = 'IN' THEN head_count
+				WHEN direction = 'OUT' THEN -head_count
+				ELSE 0
+			END
+		), 0)::int
+		FROM section_inventory_ledger
+		WHERE farm_id = $1
+		  AND section_id = $2
+	`, farmID, sectionID).Scan(&nextCount); err != nil {
+		return err
+	}
+	if nextCount < 0 {
+		nextCount = 0
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO section_inventory_balance (farm_id, section_id, head_count, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (farm_id, section_id)
+		DO UPDATE SET
+			head_count = EXCLUDED.head_count,
+			updated_at = NOW()
+	`, farmID, sectionID, nextCount)
+	return err
+}
+
+func deleteOpeningSectionDataTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) (openingSectionDeleteSummary, error) {
+	summary := openingSectionDeleteSummary{}
+
+	var hasNonOpening bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM section_inventory_ledger
+			WHERE farm_id = $1
+			  AND section_id = $2
+			  AND ref_type <> 'opening'
+		)
+	`, farmID, sectionID).Scan(&hasNonOpening); err != nil {
+		return summary, err
+	}
+	if hasNonOpening {
+		return summary, errOpeningSectionHasNonOpeningData
+	}
+
+	eventIDs, err := collectOpeningEventIDsTx(ctx, tx, farmID, sectionID)
+	if err != nil {
+		return summary, err
+	}
+	groupIDs, err := collectOpeningGroupIDsTx(ctx, tx, farmID, sectionID)
+	if err != nil {
+		return summary, err
+	}
+
+	if hasTableTx(ctx, tx, "schedule_executions") {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM schedule_executions
+			WHERE farm_id = $1
+			  AND section_id = $2
+			  AND result_ref_type = 'opening_section'
+		`, farmID, sectionID)
+		if err != nil {
+			return summary, err
+		}
+		summary.ScheduleExecutionRowsDeleted = tag.RowsAffected()
+	}
+
+	tagLedger, err := tx.Exec(ctx, `
+		DELETE FROM section_inventory_ledger
+		WHERE farm_id = $1
+		  AND section_id = $2
+		  AND ref_type = 'opening'
+	`, farmID, sectionID)
+	if err != nil {
+		return summary, err
+	}
+	summary.LedgerRowsDeleted = tagLedger.RowsAffected()
+
+	if len(eventIDs) > 0 {
+		tagLines, err := tx.Exec(ctx, `
+			DELETE FROM pig_movement_lines
+			WHERE farm_id = $1
+			  AND event_id = ANY($2::uuid[])
+		`, farmID, eventIDs)
+		if err != nil {
+			return summary, err
+		}
+		summary.MovementLineRowsDeleted = tagLines.RowsAffected()
+
+		tagEvents, err := tx.Exec(ctx, `
+			DELETE FROM pig_movement_events
+			WHERE farm_id = $1
+			  AND id = ANY($2::uuid[])
+		`, farmID, eventIDs)
+		if err != nil {
+			return summary, err
+		}
+		summary.MovementEventRowsDeleted = tagEvents.RowsAffected()
+	}
+
+	if len(groupIDs) > 0 {
+		tagGroups, err := tx.Exec(ctx, `
+			DELETE FROM pig_groups
+			WHERE farm_id = $1
+			  AND id = ANY($2::uuid[])
+		`, farmID, groupIDs)
+		if err != nil {
+			return summary, err
+		}
+		summary.GroupRowsDeleted = tagGroups.RowsAffected()
+	}
+
+	tagSows, err := tx.Exec(ctx, `
+		UPDATE sows
+		SET current_section_id = NULL,
+		    updated_at = NOW()
+		WHERE farm_id = $1
+		  AND current_section_id = $2
+	`, farmID, sectionID)
+	if err != nil {
+		return summary, err
+	}
+	summary.SowRowsDetached = tagSows.RowsAffected()
+
+	if hasFarmSectionsBirthDateColumn(ctx, tx) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE farm_sections
+			SET "entryDate" = NULL,
+			    "birthDate" = NULL,
+			    "updatedAt" = NOW()
+			WHERE id = $1
+		`, sectionID); err != nil {
+			return summary, err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `
+			UPDATE farm_sections
+			SET "entryDate" = NULL,
+			    "updatedAt" = NOW()
+			WHERE id = $1
+		`, sectionID); err != nil {
+			return summary, err
+		}
+	}
+
+	if err := recomputeSectionBalanceTx(ctx, tx, farmID, sectionID); err != nil {
+		return summary, err
+	}
+
+	var hasAnyOpening bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM section_inventory_ledger
+			WHERE farm_id = $1
+			  AND ref_type = 'opening'
+		)
+	`, farmID).Scan(&hasAnyOpening); err != nil {
+		return summary, err
+	}
+	if !hasAnyOpening {
+		if _, err := tx.Exec(ctx, `
+			UPDATE farms
+			SET farm_initialized_at = NULL,
+			    "updatedAt" = NOW()
+			WHERE id = $1
+		`, farmID); err != nil {
+			return summary, err
+		}
+	}
+
+	return summary, nil
+}
+
 func normalizeOpeningKind(v string) string {
 	switch strings.TrimSpace(v) {
 	case "breedingGestation", "farrowing", "other":
@@ -203,6 +463,27 @@ func hasPigGroupsBirthDateColumn(ctx context.Context, tx pgx.Tx) bool {
 	return err == nil && exists
 }
 
+func hasFarmSectionsBirthDateColumn(ctx context.Context, tx pgx.Tx) bool {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_name = 'farm_sections'
+			  AND column_name = 'birthDate'
+		)
+	`).Scan(&exists)
+	return err == nil && exists
+}
+
+func hasTableTx(ctx context.Context, tx pgx.Tx, tableName string) bool {
+	var exists bool
+	err := tx.QueryRow(ctx, `
+		SELECT to_regclass($1) IS NOT NULL
+	`, "public."+tableName).Scan(&exists)
+	return err == nil && exists
+}
+
 func parseOpeningGroupBirthDate(entryDate time.Time, birthDateRaw *string, ageDays *int) (*time.Time, error) {
 	if birthDateRaw != nil && strings.TrimSpace(*birthDateRaw) != "" {
 		d, err := parseYMD(strings.TrimSpace(*birthDateRaw))
@@ -219,6 +500,247 @@ func parseOpeningGroupBirthDate(entryDate time.Time, birthDateRaw *string, ageDa
 		return &d, nil
 	}
 	return nil, nil
+}
+
+func isMoveWorkContent(v string) bool {
+	s := strings.ToLower(strings.TrimSpace(v))
+	if s == "" {
+		return false
+	}
+	return strings.Contains(s, "이동") || strings.Contains(s, "move")
+}
+
+func inferExecutionTypeFromWorkContent(v string) string {
+	s := strings.ToLower(strings.TrimSpace(v))
+	if s == "" {
+		return "inspection"
+	}
+	if strings.Contains(s, "이동") || strings.Contains(s, "move") {
+		return "move"
+	}
+	if strings.Contains(s, "분만") || strings.Contains(s, "출산") || strings.Contains(s, "birth") {
+		return "birth"
+	}
+	return "inspection"
+}
+
+func intFromCriteriaContentValue(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case json.Number:
+		iv, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(iv), true
+	case string:
+		iv, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return 0, false
+		}
+		return iv, true
+	default:
+		return 0, false
+	}
+}
+
+func stringFromCriteriaContentValue(v interface{}) (string, bool) {
+	s, ok := v.(string)
+	if !ok {
+		return "", false
+	}
+	out := strings.TrimSpace(s)
+	if out == "" {
+		return "", false
+	}
+	return out, true
+}
+
+func parseCriteriaScheduledDate(criteriaContentText *string, birthDate time.Time) (time.Time, bool) {
+	if criteriaContentText == nil {
+		return time.Time{}, false
+	}
+	raw := strings.TrimSpace(*criteriaContentText)
+	if raw == "" || strings.EqualFold(raw, "null") {
+		return time.Time{}, false
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return time.Time{}, false
+	}
+
+	getFromMap := func(m map[string]interface{}) (time.Time, bool) {
+		t, _ := m["type"].(string)
+		kind := strings.ToLower(strings.TrimSpace(t))
+		if kind != "" && kind != "range" && kind != "weekend" {
+			return time.Time{}, false
+		}
+		if d, ok := intFromCriteriaContentValue(m["start_day"]); ok {
+			return birthDate.AddDate(0, 0, d), true
+		}
+		if d, ok := intFromCriteriaContentValue(m["startDay"]); ok {
+			return birthDate.AddDate(0, 0, d), true
+		}
+		if d, ok := intFromCriteriaContentValue(m["end_day"]); ok {
+			return birthDate.AddDate(0, 0, d), true
+		}
+		if d, ok := intFromCriteriaContentValue(m["endDay"]); ok {
+			return birthDate.AddDate(0, 0, d), true
+		}
+		if d, ok := intFromCriteriaContentValue(m["day"]); ok {
+			return birthDate.AddDate(0, 0, d), true
+		}
+		if s, ok := stringFromCriteriaContentValue(m["start_date"]); ok {
+			if parsed, err := parseYMD(s); err == nil {
+				return parsed, true
+			}
+		}
+		if s, ok := stringFromCriteriaContentValue(m["startDate"]); ok {
+			if parsed, err := parseYMD(s); err == nil {
+				return parsed, true
+			}
+		}
+		if s, ok := stringFromCriteriaContentValue(m["end_date"]); ok {
+			if parsed, err := parseYMD(s); err == nil {
+				return parsed, true
+			}
+		}
+		if s, ok := stringFromCriteriaContentValue(m["endDate"]); ok {
+			if parsed, err := parseYMD(s); err == nil {
+				return parsed, true
+			}
+		}
+		return time.Time{}, false
+	}
+
+	if m, ok := payload.(map[string]interface{}); ok {
+		return getFromMap(m)
+	}
+	if arr, ok := payload.([]interface{}); ok {
+		for _, item := range arr {
+			if m, ok := item.(map[string]interface{}); ok {
+				if d, ok := getFromMap(m); ok {
+					return d, true
+				}
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+type openingAutoPlannedExecution struct {
+	WorkPlanID     int
+	ScheduledDate  time.Time
+	ExecutionType  string
+	WorkContentRaw string
+}
+
+func collectOpeningAutoPlannedExecutionsTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID, birthDate time.Time) ([]openingAutoPlannedExecution, error) {
+	var structureTemplateID sql.NullInt64
+	if err := tx.QueryRow(ctx, `
+		SELECT b."structureTemplateId"
+		FROM farm_sections s
+		JOIN farm_rooms r ON r.id = s."roomId"
+		JOIN farm_barns b ON b.id = r."barnId"
+		JOIN farm_buildings bd ON bd.id = b."buildingId"
+		WHERE s.id = $1
+		  AND bd."farmId" = $2
+		LIMIT 1
+	`, sectionID, farmID).Scan(&structureTemplateID); err != nil {
+		return nil, err
+	}
+	if !structureTemplateID.Valid {
+		return []openingAutoPlannedExecution{}, nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT id, work_content, criteria_content::text
+		FROM schedule_work_plans
+		WHERE COALESCE(is_deleted, false) = false
+		  AND structure_template_id = $2
+		  AND ("farmId" IS NULL OR "farmId" = $1)
+		ORDER BY COALESCE(sort_order, 999999) ASC, id ASC
+	`, farmID, int(structureTemplateID.Int64))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	plans := make([]openingAutoPlannedExecution, 0)
+	for rows.Next() {
+		var workPlanID int
+		var workContent sql.NullString
+		var criteriaContentText *string
+		if err := rows.Scan(&workPlanID, &workContent, &criteriaContentText); err != nil {
+			return nil, err
+		}
+		if !workContent.Valid {
+			continue
+		}
+		content := strings.TrimSpace(workContent.String)
+		if content == "" || strings.EqualFold(content, openingAutoWorkContent) || strings.EqualFold(content, openingAutoWorkContentLegacy) {
+			continue
+		}
+		scheduledDate, ok := parseCriteriaScheduledDate(criteriaContentText, birthDate)
+		if !ok {
+			continue
+		}
+		plans = append(plans, openingAutoPlannedExecution{
+			WorkPlanID:     workPlanID,
+			ScheduledDate:  scheduledDate,
+			ExecutionType:  inferExecutionTypeFromWorkContent(content),
+			WorkContentRaw: content,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return plans, nil
+}
+
+func createOpeningAutoPendingExecutionsTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	farmID uuid.UUID,
+	sectionID uuid.UUID,
+	groupID *uuid.UUID,
+	groupNo string,
+	birthDate time.Time,
+) (int, error) {
+	plans, err := collectOpeningAutoPlannedExecutionsTx(ctx, tx, farmID, sectionID, birthDate)
+	if err != nil {
+		return 0, err
+	}
+	created := 0
+	for _, plan := range plans {
+		groupKey := "section:" + sectionID.String()
+		if groupID != nil {
+			groupKey = groupID.String()
+		}
+		idempotencyKey := fmt.Sprintf("opening-auto-plan-%s-%d-%s", groupKey, plan.WorkPlanID, plan.ScheduledDate.Format("20060102"))
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO schedule_executions (
+				id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status, idempotency_key, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NOW(), NOW())
+			ON CONFLICT DO NOTHING
+		`, uuid.New(), farmID, plan.WorkPlanID, sectionID, plan.ExecutionType, plan.ScheduledDate, idempotencyKey)
+		if err != nil {
+			return created, err
+		}
+		if tag.RowsAffected() > 0 {
+			created++
+		}
+	}
+	return created, nil
 }
 
 func itoa(v int) string {
@@ -476,10 +998,7 @@ func (h *Handler) FarmBootstrapOpeningSectionSave(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "farm not found"})
 		return
 	}
-	if initializedAt.Valid {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "이미 운영이 시작된 농장입니다. 초기값 저장이 제한됩니다."})
-		return
-	}
+	_ = initializedAt
 
 	var hasSaved bool
 	if err := tx.QueryRow(r.Context(), `
@@ -495,8 +1014,18 @@ func (h *Handler) FarmBootstrapOpeningSectionSave(w http.ResponseWriter, r *http
 		return
 	}
 	if hasSaved {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "해당 칸/스톨은 이미 초기값 저장이 완료되었습니다."})
-		return
+		if !body.ReplaceExisting {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "해당 칸/스톨은 이미 초기값 저장이 완료되었습니다. 수정 저장을 사용하세요."})
+			return
+		}
+		if _, err := deleteOpeningSectionDataTx(r.Context(), tx, farmID, sectionID); err != nil {
+			if err == errOpeningSectionHasNonOpeningData {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "opening 외 이력이 존재하여 초기값 수정 저장이 불가합니다. 해당 칸 이력을 정리한 뒤 다시 시도하세요."})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기존 초기값 정리 실패: " + err.Error()})
+			return
+		}
 	}
 
 	sowRequired := kind == "breedingGestation" || kind == "farrowing"
@@ -669,15 +1198,61 @@ func (h *Handler) FarmBootstrapOpeningSectionSave(w http.ResponseWriter, r *http
 		}
 	}
 
-	if _, err := tx.Exec(r.Context(), `
-		UPDATE farm_sections
-		SET "entryDate" = $1,
-		    "birthDate" = COALESCE($2, "birthDate"),
-		    "updatedAt" = NOW()
-		WHERE id = $3
-	`, entryDate, groupBirthDate, sectionID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section date update failed: " + err.Error()})
-		return
+	if hasFarmSectionsBirthDateColumn(r.Context(), tx) {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE farm_sections
+			SET "entryDate" = $1,
+			    "birthDate" = COALESCE($2, "birthDate"),
+			    "updatedAt" = NOW()
+			WHERE id = $3
+		`, entryDate, groupBirthDate, sectionID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section date update failed: " + err.Error()})
+			return
+		}
+	} else {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE farm_sections
+			SET "entryDate" = $1,
+			    "updatedAt" = NOW()
+			WHERE id = $2
+		`, entryDate, sectionID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "section date update failed: " + err.Error()})
+			return
+		}
+	}
+
+	var scheduleExecutionID *uuid.UUID
+	autoPendingMoveCount := 0
+	if hasTableTx(r.Context(), tx, "schedule_executions") && hasTableTx(r.Context(), tx, "schedule_work_plans") {
+		actorID, err := uuid.Parse(claims.UserID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "사용자 식별자가 올바르지 않습니다."})
+			return
+		}
+		openingWorkPlanID, err := ensureOpeningAutoWorkPlanTx(r.Context(), tx, farmID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "opening용 work plan 준비에 실패했습니다: " + err.Error()})
+			return
+		}
+		id := uuid.New()
+		scheduleExecutionID = &id
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO schedule_executions (
+				id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status,
+				completed_at, completed_by, result_ref_type, result_ref_id, idempotency_key, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, 'inspection', $5, 'completed', NOW(), $6, 'opening_section', $7, $8, NOW(), NOW())
+		`, id, farmID, openingWorkPlanID, sectionID, entryDate, actorID, sectionID, "opening-section-save-"+sectionID.String()); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "schedule execution completed 반영 실패: " + err.Error()})
+			return
+		}
+		if groupBirthDate != nil {
+			autoPendingMoveCount, err = createOpeningAutoPendingExecutionsTx(r.Context(), tx, farmID, sectionID, groupID, groupNo, *groupBirthDate)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "opening 기준 후속 예정 생성 실패: " + err.Error()})
+				return
+			}
+		}
 	}
 
 	if _, err := tx.Exec(r.Context(), `
@@ -696,14 +1271,20 @@ func (h *Handler) FarmBootstrapOpeningSectionSave(w http.ResponseWriter, r *http
 	}
 
 	resp := map[string]interface{}{
-		"saved":      true,
-		"farmId":     farmID.String(),
-		"sectionId":  sectionID.String(),
-		"kind":       kind,
-		"entryDate":  entryDate.Format("2006-01-02"),
-		"sowCount":   len(sowNos),
-		"headCount":  sectionDelta - int32(len(sowNos)),
+		"saved":       true,
+		"farmId":      farmID.String(),
+		"sectionId":   sectionID.String(),
+		"kind":        kind,
+		"entryDate":   entryDate.Format("2006-01-02"),
+		"sowCount":    len(sowNos),
+		"headCount":   sectionDelta - int32(len(sowNos)),
 		"initialized": true,
+	}
+	if scheduleExecutionID != nil {
+		resp["scheduleExecutionId"] = scheduleExecutionID.String()
+	}
+	if autoPendingMoveCount > 0 {
+		resp["autoPendingMoveCount"] = autoPendingMoveCount
 	}
 	if groupID != nil {
 		resp["groupId"] = groupID.String()
@@ -713,4 +1294,106 @@ func (h *Handler) FarmBootstrapOpeningSectionSave(w http.ResponseWriter, r *http
 		resp["birthDate"] = groupBirthDate.Format("2006-01-02")
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// FarmBootstrapOpeningSectionDelete DELETE /api/farms/:farmId/bootstrap/opening/sections/:sectionId
+func (h *Handler) FarmBootstrapOpeningSectionDelete(w http.ResponseWriter, r *http.Request) {
+	farmID, _, ok := h.parseFarmIDAndAuth(w, r)
+	if !ok {
+		return
+	}
+	sectionID, err := uuid.Parse(strings.TrimSpace(chi.URLParam(r, "sectionId")))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sectionId 형식이 올바르지 않습니다."})
+		return
+	}
+
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction begin failed"})
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	okBelongs, err := ensureSectionBelongsToFarmTx(r.Context(), tx, farmID, sectionID)
+	if err != nil || !okBelongs {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sectionId가 farm에 속하지 않습니다."})
+		return
+	}
+
+	summary, err := deleteOpeningSectionDataTx(r.Context(), tx, farmID, sectionID)
+	if err != nil {
+		if err == errOpeningSectionHasNonOpeningData {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "opening 외 이력이 존재하여 초기값 삭제가 불가합니다. 해당 칸 이력을 정리한 뒤 다시 시도하세요."})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "초기값 삭제 실패: " + err.Error()})
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction commit failed: " + err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deleted":                      true,
+		"farmId":                       farmID.String(),
+		"sectionId":                    sectionID.String(),
+		"ledgerRowsDeleted":            summary.LedgerRowsDeleted,
+		"movementLineRowsDeleted":      summary.MovementLineRowsDeleted,
+		"movementEventRowsDeleted":     summary.MovementEventRowsDeleted,
+		"groupRowsDeleted":             summary.GroupRowsDeleted,
+		"scheduleExecutionRowsDeleted": summary.ScheduleExecutionRowsDeleted,
+		"sowRowsDetached":              summary.SowRowsDetached,
+	})
+}
+
+func ensureOpeningAutoWorkPlanTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID) (int, error) {
+	var workPlanID int
+	err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM schedule_work_plans
+		WHERE "farmId" = $1
+		  AND COALESCE(is_deleted, false) = false
+		  AND work_content IN ($2, $3)
+		ORDER BY id ASC
+		LIMIT 1
+	`, farmID, openingAutoWorkContent, openingAutoWorkContentLegacy).Scan(&workPlanID)
+	if err == nil {
+		_, _ = tx.Exec(ctx, `
+			UPDATE schedule_work_plans
+			SET work_content = $1,
+			    "updatedAt" = NOW()
+			WHERE id = $2
+			  AND work_content <> $1
+		`, openingAutoWorkContent, workPlanID)
+		return workPlanID, nil
+	}
+	if err != pgx.ErrNoRows {
+		return 0, err
+	}
+
+	var nextOrder int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(MIN(sort_order), 0) - 1
+		FROM schedule_work_plans
+		WHERE ("farmId" = $1 OR "farmId" IS NULL)
+		  AND COALESCE(is_deleted, false) = false
+	`, farmID).Scan(&nextOrder); err != nil {
+		return 0, err
+	}
+
+	err = tx.QueryRow(ctx, `
+		INSERT INTO schedule_work_plans (
+			"farmId", structure_template_id, sortation_id, jobtype_id, criteria_id,
+			criteria_content, work_content, sort_order, is_deleted, "createdAt", "updatedAt"
+		)
+		VALUES ($1, NULL, NULL, NULL, NULL, NULL, $2, $3, false, NOW(), NOW())
+		RETURNING id
+	`, farmID, openingAutoWorkContent, nextOrder).Scan(&workPlanID)
+	if err != nil {
+		return 0, err
+	}
+	return workPlanID, nil
 }

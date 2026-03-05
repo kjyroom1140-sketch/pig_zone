@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS farm_structure (
   UNIQUE ("farmId", "templateId", category)
 );
 
+-- 사육시설 표시 순서 (POST /production 저장 시 사용. 기존 DB는 farm_structure_add_sort_order.sql 로 추가)
+ALTER TABLE farm_structure ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+
 CREATE INDEX IF NOT EXISTS idx_farm_structure_farm_id ON farm_structure ("farmId");
 CREATE INDEX IF NOT EXISTS idx_farm_structure_category ON farm_structure (category);
 

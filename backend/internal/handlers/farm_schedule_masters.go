@@ -92,14 +92,20 @@ func (h *Handler) FarmScheduleSortationsList(w http.ResponseWriter, r *http.Requ
 		if structID != nil {
 			structKey = strconv.Itoa(*structID)
 		}
-		defKey := "nil"
-		if sortationDefID != nil {
-			defKey = strconv.Itoa(*sortationDefID)
+		displayName := ""
+		if sortationName != nil && *sortationName != "" {
+			displayName = *sortationName
+		} else if sortations != nil && *sortations != "" {
+			if m := parseSortationNameFromJSON(*sortations); m != "" {
+				displayName = m
+			}
 		}
-		key := structKey + "|" + defKey
+		if displayName == "" {
+			displayName = "—"
+		}
+		key := structKey + "|" + displayName
 		isFarm := ownerFarmID != nil
 		if idx, exists := idxByKey[key]; exists {
-			// 같은 논리 항목이면 농장 데이터가 전역보다 우선
 			if !isFarmByKey[key] && isFarm {
 				list[idx] = item
 				isFarmByKey[key] = true

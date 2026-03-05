@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,43 +77,35 @@ func (h *Handler) hasFarmRoomHousingModeColumn(ctx context.Context) bool {
 	return exists
 }
 
-func isBreedingOrGestationFacilityName(name string) bool {
-	v := strings.TrimSpace(name)
-	if v == "" {
-		return false
-	}
-	return strings.Contains(v, "교배사") || strings.Contains(v, "임신사")
-}
-
+// roomAllowsHousingModeSelection: 사육시설(production, barnType이 템플릿 ID인 경우)이면 스톨/군사 선택 허용.
+// 교배사·임신사뿐 아니라 비육사·육성사·분만사 등 모든 사육시설에서 운영방식(스톨/군사) 선택 가능.
 func (h *Handler) roomAllowsHousingModeSelection(ctx context.Context, roomID uuid.UUID) bool {
-	var barnName sql.NullString
-	var templateName sql.NullString
+	var barnType sql.NullString
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT
-			b.name,
-			st.name
+		SELECT b."barnType"
 		FROM farm_rooms r
 		JOIN farm_barns b ON b.id = r."barnId"
-		LEFT JOIN structure_templates st
-			ON b."barnType" ~ '^[0-9]+$'
-			AND st.id = b."barnType"::int
 		WHERE r.id = $1
-	`, roomID).Scan(&barnName, &templateName)
-	if err != nil {
+	`, roomID).Scan(&barnType)
+	if err != nil || !barnType.Valid {
 		return false
 	}
+	// barnType이 숫자(템플릿 ID)면 사육시설 → 스톨/군사 선택 허용
+	return barnType.String != "" && len(barnType.String) < 20 && onlyDigits(barnType.String)
+}
 
-	if templateName.Valid && isBreedingOrGestationFacilityName(templateName.String) {
-		return true
+func onlyDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
 	}
-	if barnName.Valid && isBreedingOrGestationFacilityName(barnName.String) {
-		return true
-	}
-	return false
+	return len(s) > 0
 }
 
 // FarmFacilitiesTree GET /api/farm-facilities/:farmId/tree
 // Returns buildings with nested barns -> rooms -> sections (flat nesting, no floor grouping).
+// Barns are ordered by sort_order (화살표로 변경한 순서), then floorNumber, orderIndex.
 func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 	farmID, ok := h.parseFarmIDAndCheckFacility(w, r)
 	if !ok {
@@ -143,8 +136,9 @@ func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 		}
 		barns, _ := h.db.Pool.Query(r.Context(), `
 			SELECT id, name, "barnType", "floorNumber", "orderIndex", description
-			FROM farm_barns WHERE "buildingId" = $1 AND "isActive" = true ORDER BY "floorNumber" ASC, "orderIndex" ASC
+			FROM farm_barns WHERE "buildingId" = $1 AND "isActive" = true ORDER BY COALESCE("sort_order", 999999) ASC, "floorNumber" ASC, "orderIndex" ASC
 		`, buildID)
+		var barnList []map[string]interface{}
 		for barns.Next() {
 			var barnID uuid.UUID
 			var barnName, barnType, barnDesc *string
@@ -232,10 +226,11 @@ func (h *Handler) FarmFacilitiesTree(w http.ResponseWriter, r *http.Request) {
 				barnMap["rooms"] = append(roomList, roomMap)
 			}
 			rooms.Close()
-			barnList := building["barns"].([]map[string]interface{})
-			building["barns"] = append(barnList, barnMap)
+			barnList = append(barnList, barnMap)
 		}
 		barns.Close()
+		// barnList는 이미 ORDER BY sort_order, floorNumber, orderIndex 로 가져온 순서 유지 (화살표로 변경한 순서 반영)
+		building["barns"] = barnList
 		tree = append(tree, building)
 	}
 	writeJSON(w, http.StatusOK, tree)
@@ -483,6 +478,73 @@ func (h *Handler) FarmBarnDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "?????筌???????"})
+}
+
+// FarmBarnsReorder PUT /api/farm-facilities/:farmId/buildings/:buildingId/barns-reorder
+// body: { barnIds: string[] } - ordered barn IDs
+func (h *Handler) FarmBarnsReorder(w http.ResponseWriter, r *http.Request) {
+	farmID, ok := h.parseFarmIDAndCheckFacility(w, r)
+	if !ok {
+		return
+	}
+	buildingIDStr := chi.URLParam(r, "buildingId")
+	buildingID, err := uuid.Parse(buildingIDStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "buildingId required"})
+		return
+	}
+
+	var body struct {
+		BarnIds []string `json:"barnIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Validate building belongs to farm
+	var bFarmID uuid.UUID
+	err = h.db.Pool.QueryRow(r.Context(), `SELECT "farmId" FROM farm_buildings WHERE id = $1`, buildingID).Scan(&bFarmID)
+	if err != nil || bFarmID != farmID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "building does not belong to farm"})
+		return
+	}
+
+	// Validate all barns belong to the building and farm
+	for _, barnIDStr := range body.BarnIds {
+		barnID, err := uuid.Parse(barnIDStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid barnId format"})
+			return
+		}
+		var bBuildingID uuid.UUID
+		err = h.db.Pool.QueryRow(r.Context(), `SELECT "buildingId" FROM farm_barns WHERE id = $1 AND "isActive" = true`, barnID).Scan(&bBuildingID)
+		if err != nil || bBuildingID != buildingID {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "barn does not belong to building"})
+			return
+		}
+	}
+
+	// Update sort_order for each barn (컬럼 없으면 scripts/farm_barns_add_sort_order.sql 적용 필요)
+	for i, barnIDStr := range body.BarnIds {
+		barnID, _ := uuid.Parse(barnIDStr)
+		result, err := h.db.Pool.Exec(r.Context(), `UPDATE farm_barns SET sort_order = $1, "updatedAt" = NOW() WHERE id = $2`, i, barnID)
+		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "sort_order") && (strings.Contains(errMsg, "does not exist") || strings.Contains(errMsg, "column")) {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{
+					"error": "farm_barns.sort_order 컬럼이 없습니다. scripts/farm_barns_add_sort_order.sql 을 DB에 적용한 뒤 서버를 재시작하세요.",
+				})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update barn order", "detail": errMsg})
+			return
+		}
+		rowsAffected := result.RowsAffected()
+		log.Printf("[farm_facilities] barns-reorder: buildingId=%s barnId=%s sort_order=%d rowsAffected=%d", buildingIDStr, barnIDStr, i, rowsAffected)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "barn order updated successfully"})
 }
 
 // FarmRoomsBulkCreate POST /api/farm-facilities/:farmId/barns/:barnId/rooms/bulk
@@ -750,7 +812,7 @@ func (h *Handler) FarmRoomUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if mode == "stall" && !h.roomAllowsHousingModeSelection(r.Context(), roomID) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "운영방식은 교배사/임신사에서만 stall 선택이 가능합니다."})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "해당 시설은 스톨 방식을 선택할 수 없습니다. 사육시설(비육사·육성사 등)의 방에서만 선택 가능합니다."})
 			return
 		}
 		if _, err := h.db.Pool.Exec(r.Context(), `UPDATE farm_rooms SET "housingMode" = $1, "updatedAt" = NOW() WHERE id = $2`, mode, roomID); err != nil {

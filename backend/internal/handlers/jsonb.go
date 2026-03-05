@@ -21,6 +21,22 @@ func ParseJSONBFromText(s *string) interface{} {
 	return v
 }
 
+// parseSortationNameFromJSON 는 sortations JSONB 문자열에서 첫 요소의 "name" 필드를 추출한다.
+// 레거시 형식 [{"name":"자돈"}] 등에서 표시 이름을 얻기 위해 사용.
+func parseSortationNameFromJSON(s string) string {
+	if s == "" {
+		return ""
+	}
+	var arr []map[string]interface{}
+	if err := json.Unmarshal([]byte(s), &arr); err != nil || len(arr) == 0 {
+		return ""
+	}
+	if n, ok := arr[0]["name"].(string); ok && n != "" {
+		return n
+	}
+	return ""
+}
+
 // ParseJSONBFromBytes 는 이미 []byte 로 읽은 JSONB 값을 API 응답용 interface{} 로 파싱한다.
 // (일부 쿼리에서 JSONB를 *[]byte 로 스캔하는 경우에만 사용.)
 func ParseJSONBFromBytes(b *[]byte) interface{} {

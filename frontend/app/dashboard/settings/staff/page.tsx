@@ -373,8 +373,8 @@ export default function SettingsStaffPage() {
           </div>
 
           {createModalOpen && (
-            <div style={modalBackdropStyle} onClick={() => !creating && setCreateModalOpen(false)}>
-              <div style={modalCardStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={modalBackdropStyle}>
+              <div style={modalCardStyle}>
                 <h3 style={modalTitleStyle}>직원 등록</h3>
                 <form onSubmit={onCreate} style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr' }}>
                   <input placeholder="아이디 *" value={form.username} onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))} style={inputStyle} />
@@ -398,8 +398,8 @@ export default function SettingsStaffPage() {
           )}
 
           {editModalOpen && editingStaff && (
-            <div style={modalBackdropStyle} onClick={() => savingId ? null : setEditModalOpen(false)}>
-              <div style={modalCardStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={modalBackdropStyle}>
+              <div style={modalCardStyle}>
                 <h3 style={modalTitleStyle}>직원 정보 수정</h3>
                 <form onSubmit={onSaveEdit} style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr' }}>
                   <input placeholder="이름 *" value={editForm.fullName} onChange={(e) => setEditForm((p) => ({ ...p, fullName: e.target.value }))} style={inputStyle} />

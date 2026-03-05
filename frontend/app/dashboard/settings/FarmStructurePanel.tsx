@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   getFarmFacilitiesTree,
   saveFarmOpeningSection,
+  deleteFarmOpeningSection,
   createFarmBuilding,
   createFarmBarn,
   createFarmRoomsBulk,
@@ -11,7 +12,8 @@ import {
   updateFarmRoom,
   deleteFarmBuilding,
   deleteFarmBarn,
-  deleteFarmRoom,
+  saveFarmStructureProduction,
+  reorderFarmBarns,
   type FarmBuilding,
   type FarmBarn,
   type FarmRoom,
@@ -54,6 +56,15 @@ function normalizeHexColor(value?: string | null): string | null {
   return v.toUpperCase();
 }
 
+function parseAgeDaysFromLabel(value?: string | null): number | null {
+  if (!value) return null;
+  const match = value.match(/(\d{1,4})/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -66,6 +77,7 @@ type Props = {
   productionTemplates?: StructureTemplate[] | null;
   hasSavedProductionSelection?: boolean;
   selectedProductionTemplateIds?: number[];
+  onProductionOrderSaved?: (orderedIds: number[]) => void;
 };
 
 type OpeningFacilityKind = 'breedingGestation' | 'farrowing' | 'other';
@@ -95,6 +107,7 @@ export default function FarmStructurePanel({
   productionTemplates = [],
   hasSavedProductionSelection = true,
   selectedProductionTemplateIds = [],
+  onProductionOrderSaved,
 }: Props) {
   const productionTemplateNameById = new Map(
     (Array.isArray(productionTemplates) ? productionTemplates : [])
@@ -103,6 +116,10 @@ export default function FarmStructurePanel({
   const productionTemplateColorById = new Map(
     (Array.isArray(productionTemplates) ? productionTemplates : [])
       .map((t) => [t.id, normalizeHexColor(t.themeColor)] as const)
+  );
+  const productionTemplateAgeDaysById = new Map(
+    (Array.isArray(productionTemplates) ? productionTemplates : [])
+      .map((t) => [t.id, parseAgeDaysFromLabel(t.ageLabel)] as const)
   );
   const allowedTemplateIdSet = new Set(
     selectedProductionTemplateIds
@@ -124,9 +141,11 @@ export default function FarmStructurePanel({
     sectionName: string;
     unitLabel: '칸' | '스톨';
     kind: OpeningFacilityKind;
+    defaultAgeDays: number | null;
   } | null>(null);
   const [openingResult, setOpeningResult] = useState<string>('');
   const [openingSectionSaving, setOpeningSectionSaving] = useState(false);
+  const [openingSectionDeleting, setOpeningSectionDeleting] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [isOpeningInputMode, setIsOpeningInputMode] = useState(false);
   const [expandedBuilding, setExpandedBuilding] = useState<Set<string>>(new Set());
@@ -164,6 +183,110 @@ export default function FarmStructurePanel({
   const [roomConfigCount, setRoomConfigCount] = useState(1);
   const [savingRoomConfig, setSavingRoomConfig] = useState(false);
 
+  /** 사육시설 순서 (농장 구조 설정에서 변경) */
+  const [orderedTemplateIds, setOrderedTemplateIds] = useState<number[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  useEffect(() => {
+    setOrderedTemplateIds([...selectedProductionTemplateIds]);
+  }, [selectedProductionTemplateIds]);
+
+  function moveTemplateUp(idx: number) {
+    if (idx <= 0) return;
+    setOrderedTemplateIds((prev) => {
+      const next = [...prev];
+      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      return next;
+    });
+  }
+
+  function moveTemplateDown(idx: number) {
+    if (idx < 0 || idx >= orderedTemplateIds.length - 1) return;
+    setOrderedTemplateIds((prev) => {
+      const next = [...prev];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      return next;
+    });
+  }
+
+  async function saveTemplateOrder() {
+    if (orderedTemplateIds.length === 0) return;
+    setSavingOrder(true);
+    try {
+      await saveFarmStructureProduction(farmId, orderedTemplateIds);
+      onProductionOrderSaved?.(orderedTemplateIds);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '순서 저장 실패');
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
+  function moveBarnUp(buildingId: string, barnIndex: number) {
+    if (barnIndex <= 0) return;
+    setTree((prev) => {
+      const next = [...prev];
+      const buildingIdx = next.findIndex((b) => b.id === buildingId);
+      if (buildingIdx < 0) return prev;
+      const building = { ...next[buildingIdx] };
+      const barns = [...(building.barns ?? [])];
+      [barns[barnIndex - 1], barns[barnIndex]] = [barns[barnIndex], barns[barnIndex - 1]];
+      building.barns = barns;
+      next[buildingIdx] = building;
+      return next;
+    });
+  }
+
+  function moveBarnDown(buildingId: string, barnIndex: number) {
+    setTree((prev) => {
+      const building = prev.find((b) => b.id === buildingId);
+      if (!building || !building.barns || barnIndex >= building.barns.length - 1) return prev;
+      const next = [...prev];
+      const buildingIdx = next.findIndex((b) => b.id === buildingId);
+      const updatedBuilding = { ...next[buildingIdx] };
+      const barns = [...(updatedBuilding.barns ?? [])];
+      [barns[barnIndex], barns[barnIndex + 1]] = [barns[barnIndex + 1], barns[barnIndex]];
+      updatedBuilding.barns = barns;
+      next[buildingIdx] = updatedBuilding;
+      return next;
+    });
+  }
+
+  async function handleMoveBarnUp(buildingId: string, barnIndex: number) {
+    if (barnIndex <= 0) return;
+    const building = tree.find((b) => b.id === buildingId);
+    const barns = building?.barns ?? [];
+    if (barnIndex >= barns.length) return;
+    const newOrder = [...barns];
+    [newOrder[barnIndex - 1], newOrder[barnIndex]] = [newOrder[barnIndex], newOrder[barnIndex - 1]];
+    const barnIds = newOrder.map((b) => b.id);
+    moveBarnUp(buildingId, barnIndex);
+    try {
+      await reorderFarmBarns(farmId, buildingId, barnIds);
+      loadTree();
+    } catch (e) {
+      alert('순서 저장 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'));
+      loadTree();
+    }
+  }
+
+  async function handleMoveBarnDown(buildingId: string, barnIndex: number) {
+    const building = tree.find((b) => b.id === buildingId);
+    const barns = building?.barns ?? [];
+    if (barnIndex < 0 || barnIndex >= barns.length - 1) return;
+    const newOrder = [...barns];
+    [newOrder[barnIndex], newOrder[barnIndex + 1]] = [newOrder[barnIndex + 1], newOrder[barnIndex]];
+    const barnIds = newOrder.map((b) => b.id);
+    moveBarnDown(buildingId, barnIndex);
+    try {
+      await reorderFarmBarns(farmId, buildingId, barnIds);
+      loadTree();
+    } catch (e) {
+      alert('순서 저장 실패: ' + (e instanceof Error ? e.message : '알 수 없는 오류'));
+      loadTree();
+    }
+  }
+
   function loadTree() {
     setLoading(true);
     setError('');
@@ -199,6 +322,15 @@ export default function FarmStructurePanel({
     return v || fallback;
   }
 
+  function extractYmd(value: unknown): string {
+    if (typeof value === 'string') {
+      const text = value.trim().slice(0, 10);
+      return isValidYmdDate(text) ? text : '';
+    }
+    if (value instanceof Date) return toYmd(value);
+    return '';
+  }
+
   function getFacilityKind(name: string): OpeningFacilityKind {
     const v = name.trim();
     if (v.includes('교배사') || v.includes('임신사')) return 'breedingGestation';
@@ -226,6 +358,16 @@ export default function FarmStructurePanel({
     const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
     const dd = String(date.getUTCDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function calcAgeDaysFromBirthDate(birthDate: string, asOfDate: string): number | null {
+    if (!isValidYmdDate(birthDate) || !isValidYmdDate(asOfDate)) return null;
+    const birth = new Date(`${birthDate}T00:00:00.000Z`);
+    const asOf = new Date(`${asOfDate}T00:00:00.000Z`);
+    if (Number.isNaN(birth.getTime()) || Number.isNaN(asOf.getTime())) return null;
+    const diffMs = asOf.getTime() - birth.getTime();
+    if (diffMs < 0) return null;
+    return Math.floor(diffMs / 86400000);
   }
 
   function calcBirthDateFromAge(entryDate: string, ageDays: number | null): string {
@@ -289,6 +431,9 @@ export default function FarmStructurePanel({
     (building.barns ?? []).flatMap((barn) => {
       const facilityName = normalizeDisplayName(barn.name, '시설');
       const kind = getFacilityKind(facilityName);
+      const templateDefaultAgeDays = typeof barn.structureTemplateId === 'number'
+        ? (productionTemplateAgeDaysById.get(barn.structureTemplateId) ?? null)
+        : null;
       return (barn.rooms ?? []).flatMap((room) => {
         const unitLabel: '칸' | '스톨' = room.housingMode === 'stall' ? '스톨' : '칸';
         const roomName = getRoomDisplayNameForOpening(room);
@@ -300,23 +445,69 @@ export default function FarmStructurePanel({
           sectionName: getSectionDisplayNameForOpening(section, unitLabel),
           unitLabel,
           kind,
+          defaultAgeDays: (kind === 'farrowing' || kind === 'other') ? templateDefaultAgeDays : null,
+          savedEntryDate: extractYmd(section.entryDate),
+          savedHeadCount: Number.isFinite(Number(section.currentPigCount)) ? Number(section.currentPigCount) : 0,
         }));
       });
     })
   );
 
   const openingTargetBySectionId = new Map(openingTargets.map((t) => [t.sectionId, t] as const));
+  const savedOpeningSectionIdSet = new Set(
+    openingTargets
+      .filter((t) => isValidYmdDate(t.savedEntryDate))
+      .map((t) => t.sectionId)
+  );
 
   function openOpeningSectionModal(sectionId: string) {
     const target = openingTargetBySectionId.get(sectionId);
     if (!target) return;
+    setOpeningDraftBySection((prev) => {
+      if (prev[sectionId]) return prev;
+      return {
+        ...prev,
+        [sectionId]: {
+          sowNos: '',
+          headCount: target.savedHeadCount > 0 ? target.savedHeadCount : 0,
+          entryDate: target.savedEntryDate || '',
+          birthDate: '',
+          ageDays: target.defaultAgeDays,
+        },
+      };
+    });
     setOpeningSectionModal(target);
   }
 
   function updateOpeningSectionDraft(sectionId: string, patch: Partial<OpeningSectionDraft>) {
     setOpeningDraftBySection((prev) => {
       const current = prev[sectionId] ?? { sowNos: '', headCount: 0, entryDate: '', birthDate: '', ageDays: null };
-      return { ...prev, [sectionId]: { ...current, ...patch } };
+      const nextDraft: OpeningSectionDraft = { ...current, ...patch };
+      const hasBirthDatePatch = Object.prototype.hasOwnProperty.call(patch, 'birthDate');
+      const hasEntryDatePatch = Object.prototype.hasOwnProperty.call(patch, 'entryDate');
+      const hasAgeDaysPatch = Object.prototype.hasOwnProperty.call(patch, 'ageDays');
+
+      if (hasEntryDatePatch && isValidYmdDate(nextDraft.entryDate)) {
+        const target = openingTargetBySectionId.get(sectionId);
+        let birthFromEntryAge = '';
+        if (target?.defaultAgeDays != null && target.defaultAgeDays >= 0) {
+          birthFromEntryAge = calcBirthDateFromAge(nextDraft.entryDate, target.defaultAgeDays);
+        } else if (current.ageDays != null && current.ageDays >= 0) {
+          birthFromEntryAge = calcBirthDateFromAge(nextDraft.entryDate, current.ageDays);
+        } else if (isValidYmdDate(current.birthDate)) {
+          birthFromEntryAge = current.birthDate;
+        }
+        if (birthFromEntryAge) {
+          nextDraft.birthDate = birthFromEntryAge;
+          const todayAge = calcAgeDaysFromBirthDate(birthFromEntryAge, toYmd(new Date()));
+          if (todayAge != null) nextDraft.ageDays = todayAge;
+        }
+      } else if (!hasBirthDatePatch && hasAgeDaysPatch && nextDraft.ageDays != null && nextDraft.ageDays >= 0) {
+        const birthFromTodayAge = calcBirthDateFromAge(toYmd(new Date()), nextDraft.ageDays);
+        if (birthFromTodayAge) nextDraft.birthDate = birthFromTodayAge;
+      }
+
+      return { ...prev, [sectionId]: nextDraft };
     });
   }
 
@@ -326,6 +517,10 @@ export default function FarmStructurePanel({
     const draft = getOpeningDraft(sectionId);
     const required = getOpeningRequiredState(target.kind, draft);
     return required.entryValid && required.sowValid && required.headValid && required.birthOrAgeValid;
+  }
+
+  function isOpeningSectionSaved(sectionId: string): boolean {
+    return savedOpeningSectionIdSet.has(sectionId);
   }
 
   async function saveOpeningSection() {
@@ -341,6 +536,7 @@ export default function FarmStructurePanel({
     const body = {
       kind: openingSectionModal.kind,
       entryDate: draft.entryDate,
+      replaceExisting: isOpeningSectionSaved(sectionId),
       sows,
       group: (openingSectionModal.kind === 'farrowing' || openingSectionModal.kind === 'other')
         ? {
@@ -356,13 +552,43 @@ export default function FarmStructurePanel({
     try {
       const result = await saveFarmOpeningSection(farmId, sectionId, body);
       setOpeningResult(
-        `저장 완료: ${openingSectionModal.sectionName} (모돈 ${result.sowCount}두, 돈군두수 ${result.headCount})`
+        `${isOpeningSectionSaved(sectionId) ? '수정 저장 완료' : '저장 완료'}: ${openingSectionModal.sectionName} (모돈 ${result.sowCount}두, 돈군두수 ${result.headCount})`
       );
       setOpeningSectionModal(null);
+      loadTree();
     } catch (e) {
       setOpeningResult(e instanceof Error ? e.message : '초기값 저장 실패');
     } finally {
       setOpeningSectionSaving(false);
+    }
+  }
+
+  async function deleteOpeningSection() {
+    if (!farmId || !openingSectionModal) return;
+    const sectionId = openingSectionModal.sectionId;
+    if (!isOpeningSectionSaved(sectionId)) {
+      setOpeningResult('삭제할 초기값이 없습니다.');
+      return;
+    }
+    if (!confirm(`${openingSectionModal.sectionName} 초기값을 삭제할까요?\n(연결된 opening 원장/돈군/이동/일정 실행도 함께 정리됩니다)`)) return;
+    setOpeningSectionDeleting(true);
+    setOpeningResult('');
+    try {
+      const res = await deleteFarmOpeningSection(farmId, sectionId);
+      setOpeningDraftBySection((prev) => {
+        const next = { ...prev };
+        delete next[sectionId];
+        return next;
+      });
+      setOpeningResult(
+        `삭제 완료: ${openingSectionModal.sectionName} (원장 ${res.ledgerRowsDeleted}건, 돈군 ${res.groupRowsDeleted}건, 일정 ${res.scheduleExecutionRowsDeleted}건)`
+      );
+      setOpeningSectionModal(null);
+      loadTree();
+    } catch (e) {
+      setOpeningResult(e instanceof Error ? e.message : '초기값 삭제 실패');
+    } finally {
+      setOpeningSectionDeleting(false);
     }
   }
 
@@ -465,13 +691,6 @@ export default function FarmStructurePanel({
       .then(loadTree)
       .catch((e) => alert(e instanceof Error ? e.message : '삭제 실패'));
   }
-  function handleDeleteRoom(roomId: string) {
-    if (!confirm('이 방과 하위 칸을 모두 삭제할까요?')) return;
-    deleteFarmRoom(farmId, roomId)
-      .then(loadTree)
-      .catch((e) => alert(e instanceof Error ? e.message : '삭제 실패'));
-  }
-
   function openRoomConfigModal(params: {
     roomId: string;
     facilityName: string;
@@ -521,7 +740,9 @@ export default function FarmStructurePanel({
   const openingModalRequired: OpeningRequiredState | null = openingSectionModal
     ? getOpeningRequiredState(openingSectionModal.kind, openingModalDraft)
     : null;
-  const openingModalCalculatedBirthDate = calcBirthDateFromAge(openingModalDraft.entryDate, openingModalDraft.ageDays);
+  const openingModalCalculatedBirthDate = isValidYmdDate(openingModalDraft.birthDate)
+    ? openingModalDraft.birthDate
+    : calcBirthDateFromAge(openingModalDraft.entryDate, openingModalDraft.ageDays);
   const openingModalMissingItems: string[] = openingModalRequired
     ? [
       openingModalRequired.entryRequired && !openingModalRequired.entryValid ? '전입일' : '',
@@ -531,6 +752,7 @@ export default function FarmStructurePanel({
     ].filter(Boolean)
     : [];
   const openingModalSaveDisabled = !!openingSectionModal && (openingModalMissingItems.length > 0 || openingSectionSaving);
+  const openingModalAlreadySaved = !!openingSectionModal && isOpeningSectionSaved(openingSectionModal.sectionId);
 
   return (
     <div style={{ width: 460, flexShrink: 0, display: 'flex', flexDirection: 'column', fontSize: BODY_FONT_SIZE, color: '#1e293b' }}>
@@ -653,53 +875,57 @@ export default function FarmStructurePanel({
                       <span style={TREE_TOGGLE_PLACEHOLDER_STYLE} />
                     )}
                     <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{building.name || '건물'}</span>
-                    <span style={{ color: '#64748b', fontSize: 13 }}>
+                    <span style={{ color: '#64748b', fontSize: 14 }}>
                       시설 {building.barns?.length ?? 0}개
                     </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowAddBarn(building.id);
-                        setBarnName('');
-                        setBarnTemplateId(templates[0]?.id ?? '');
-                        setBarnRoomCount(1);
-                      }}
-                      style={{
-                        marginLeft: 'auto',
-                        padding: '6px 10px',
-                        fontSize: 15,
-                        background: '#e0f2fe',
-                        color: '#0369a1',
-                        border: 'none',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      + 시설 추가
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteBuilding(building.id);
-                      }}
-                      style={{
-                        padding: '6px 10px',
-                        fontSize: 15,
-                        background: '#fef2f2',
-                        color: '#b91c1c',
-                        border: 'none',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      삭제
-                    </button>
+                    {isEditMode && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowAddBarn(building.id);
+                            setBarnName('');
+                            setBarnTemplateId(templates[0]?.id ?? '');
+                            setBarnRoomCount(1);
+                          }}
+                          style={{
+                            marginLeft: 'auto',
+                            padding: '6px 10px',
+                            fontSize: 15,
+                            background: '#e0f2fe',
+                            color: '#0369a1',
+                            border: 'none',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          + 시설 추가
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteBuilding(building.id);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: 15,
+                            background: '#fef2f2',
+                            color: '#b91c1c',
+                            border: 'none',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          삭제
+                        </button>
+                      </>
+                    )}
                   </div>
                   {expandedBuilding.has(building.id) && (
                     <div style={{ padding: '10px 10px 10px 24px', background: '#fff' }}>
-                      {(building.barns ?? []).map((barn) => (
+                      {(building.barns ?? []).map((barn, barnIndex) => (
                         <BarnRow
                           key={barn.id}
                           barn={barn}
@@ -717,10 +943,12 @@ export default function FarmStructurePanel({
                           expandedRoom={expandedRoom}
                           toggleRoom={toggleRoom}
                           onDeleteBarn={() => handleDeleteBarn(barn.id)}
-                          onDeleteRoom={handleDeleteRoom}
                           onOpenOpeningSectionModal={openOpeningSectionModal}
-                          hasOpeningInput={isOpeningSectionComplete}
+                          hasOpeningInput={(sectionId) => isOpeningSectionSaved(sectionId) || isOpeningSectionComplete(sectionId)}
                           openingInputEnabled={isOpeningInputMode}
+                          onMoveBarnUp={barnIndex > 0 ? () => handleMoveBarnUp(building.id, barnIndex) : undefined}
+                          onMoveBarnDown={barnIndex < (building.barns?.length ?? 1) - 1 ? () => handleMoveBarnDown(building.id, barnIndex) : undefined}
+                          isEditMode={isEditMode}
                         />
                       ))}
                     </div>
@@ -745,7 +973,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => setShowProductionRequiredModal(false)}
         >
           <div
             style={{
@@ -792,7 +1019,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => !addingBuilding && setShowAddBuilding(false)}
         >
           <div
             style={{
@@ -843,7 +1069,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => !addingBarn && setShowAddBarn(null)}
         >
           <div
             style={{
@@ -941,7 +1166,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => !addingRooms && setRoomBulkBarnId(null)}
         >
           <div
             style={{
@@ -996,7 +1220,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => setOpeningSectionModal(null)}
         >
           <div
             style={{
@@ -1128,7 +1351,7 @@ export default function FarmStructurePanel({
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: 14, marginBottom: 6, color: '#475569' }}>일령(일)</label>
+                    <label style={{ display: 'block', fontSize: 14, marginBottom: 6, color: '#475569' }}>일령(일, 오늘 기준)</label>
                     <input
                       type="number"
                       min={0}
@@ -1159,21 +1382,40 @@ export default function FarmStructurePanel({
               )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button type="button" onClick={() => setOpeningSectionModal(null)} style={{ padding: '8px 16px', fontSize: 15, background: '#f1f5f9', border: 'none', borderRadius: 6, cursor: 'pointer' }}>닫기</button>
+                {openingModalAlreadySaved ? (
+                  <button
+                    type="button"
+                    onClick={deleteOpeningSection}
+                    disabled={openingSectionSaving || openingSectionDeleting}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: 15,
+                      background: '#dc2626',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      cursor: openingSectionSaving || openingSectionDeleting ? 'not-allowed' : 'pointer',
+                      opacity: openingSectionSaving || openingSectionDeleting ? 0.7 : 1,
+                    }}
+                  >
+                    {openingSectionDeleting ? '삭제 중...' : '삭제'}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={saveOpeningSection}
-                  disabled={openingModalSaveDisabled}
+                  disabled={openingModalSaveDisabled || openingSectionDeleting}
                   style={{
                     padding: '8px 16px',
                     fontSize: 15,
-                    background: openingModalSaveDisabled ? '#94a3b8' : '#0284c7',
+                    background: openingModalSaveDisabled || openingSectionDeleting ? '#94a3b8' : '#0284c7',
                     color: '#fff',
                     border: 'none',
                     borderRadius: 6,
-                    cursor: openingModalSaveDisabled ? 'not-allowed' : 'pointer',
+                    cursor: openingModalSaveDisabled || openingSectionDeleting ? 'not-allowed' : 'pointer',
                   }}
                 >
-                  {openingSectionSaving ? '저장 중...' : '저장'}
+                  {openingSectionSaving ? (openingModalAlreadySaved ? '수정 저장 중...' : '저장 중...') : (openingModalAlreadySaved ? '수정 저장' : '저장')}
                 </button>
               </div>
             </div>
@@ -1193,7 +1435,6 @@ export default function FarmStructurePanel({
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={closeRoomConfigModal}
         >
           <div
             style={{
@@ -1271,10 +1512,12 @@ function BarnRow({
   expandedRoom,
   toggleRoom,
   onDeleteBarn,
-  onDeleteRoom,
   onOpenOpeningSectionModal,
   hasOpeningInput,
   openingInputEnabled,
+  onMoveBarnUp,
+  onMoveBarnDown,
+  isEditMode = false,
 }: {
   barn: FarmBarn;
   templateNameById: Map<number, string>;
@@ -1293,10 +1536,12 @@ function BarnRow({
   expandedRoom: Set<string>;
   toggleRoom: (id: string) => void;
   onDeleteBarn: () => void;
-  onDeleteRoom: (roomId: string) => void;
   onOpenOpeningSectionModal: (sectionId: string) => void;
   hasOpeningInput: (sectionId: string) => boolean;
   openingInputEnabled: boolean;
+  onMoveBarnUp?: () => void;
+  onMoveBarnDown?: () => void;
+  isEditMode?: boolean;
 }) {
   const mappedTemplateName = barn.structureTemplateId
     ? templateNameById.get(barn.structureTemplateId)
@@ -1355,9 +1600,10 @@ function BarnRow({
     return room.housingMode === 'stall' ? '스톨' : '칸';
   }
 
-  function isHousingModeSelectableFacility(name: string): boolean {
-    const v = name.trim();
-    return v.includes('교배사') || v.includes('임신사');
+  /** 사육시설(비육사·육성사·교배사·임신사·분만사 등)이면 스톨/군사 운영방식 선택 가능 */
+  function isProductionBarn(barn: FarmBarn): boolean {
+    if (barn.structureTemplateId != null) return true;
+    return /^[0-9]+$/.test(String(barn.barnType ?? ''));
   }
 
   return (
@@ -1389,19 +1635,85 @@ function BarnRow({
         ) : (
           <span style={TREE_TOGGLE_PLACEHOLDER_STYLE} />
         )}
-        <span style={{ fontSize: 14, fontWeight: 600 }}>{displayName}{templateSuffix}</span>
-        <span style={{ color: '#64748b', fontSize: 12 }}>방 {roomCount}개</span>
-        <button type="button" onClick={(e) => { e.stopPropagation(); onAddRooms(roomCount, `${displayName}${templateSuffix}`); }} style={{ marginLeft: 'auto', padding: '5px 10px', fontSize: 13, background: '#e0f2fe', color: '#0369a1', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-          {roomCount === 0 ? '방 추가' : '방 갯수 변경'}
-        </button>
-        <button type="button" onClick={(e) => { e.stopPropagation(); onDeleteBarn(); }} style={{ padding: '5px 10px', fontSize: 13, background: '#fef2f2', color: '#b91c1c', border: 'none', borderRadius: 6, cursor: 'pointer' }}>삭제</button>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>{displayName}{templateSuffix}</span>
+        <span style={{ color: '#64748b', fontSize: 14 }}>방 {roomCount}개</span>
+        {isEditMode && (
+          <>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onAddRooms(roomCount, `${displayName}${templateSuffix}`); }} style={{ marginLeft: 'auto', padding: '5px 10px', fontSize: 14, background: '#e0f2fe', color: '#0369a1', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+              {roomCount === 0 ? '방 추가' : '방 갯수 변경'}
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onDeleteBarn(); }} style={{ padding: '5px 10px', fontSize: 14, background: '#fef2f2', color: '#b91c1c', border: 'none', borderRadius: 6, cursor: 'pointer' }}>삭제</button>
+          </>
+        )}
+        {(onMoveBarnUp || onMoveBarnDown) && isEditMode && (
+          <span style={{ display: 'flex', gap: 2 }}>
+            {onMoveBarnUp ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveBarnUp?.();
+                }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 4,
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1,
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="위로"
+              >
+                ↑
+              </button>
+            ) : (
+              <span style={{ width: 22, height: 22 }} />
+            )}
+            {onMoveBarnDown ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveBarnDown?.();
+                }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 4,
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1,
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="아래로"
+              >
+                ↓
+              </button>
+            ) : (
+              <span style={{ width: 22, height: 22 }} />
+            )}
+          </span>
+        )}
       </div>
       {expanded && (
         <div style={{ padding: '8px 8px 8px 20px', background: '#fff' }}>
           {(barn.rooms ?? []).map((room: FarmRoom) => {
             const sectionCount = room.sections?.length ?? 0;
             const roomHasChildren = sectionCount > 0;
-            const allowModeSelection = isHousingModeSelectableFacility(displayName);
+            const allowModeSelection = isProductionBarn(barn);
             const roomUnitLabel: '칸' | '스톨' = allowModeSelection ? getRoomUnitLabel(room) : '칸';
             const roomHousingMode: 'stall' | 'group' = room.housingMode === 'stall' ? 'stall' : 'group';
             return (
@@ -1414,12 +1726,17 @@ function BarnRow({
                     padding: '4px 8px',
                     background: '#f8fafc',
                     borderRadius: 6,
+                    cursor: roomHasChildren ? 'pointer' : 'default',
                   }}
+                  onClick={roomHasChildren ? () => toggleRoom(room.id) : undefined}
                 >
                   {roomHasChildren ? (
                     <button
                       type="button"
-                      onClick={() => toggleRoom(room.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleRoom(room.id);
+                      }}
                       style={treeToggleBtnStyle(expandedRoom.has(room.id))}
                       aria-label={expandedRoom.has(room.id) ? '접기' : '펼치기'}
                       title={expandedRoom.has(room.id) ? '접기' : '펼치기'}
@@ -1429,23 +1746,32 @@ function BarnRow({
                   ) : (
                     <span style={TREE_TOGGLE_PLACEHOLDER_STYLE} />
                   )}
-                  <span style={{ fontSize: 14 }}>{getRoomDisplayName(room)}</span>
-                  <span style={{ color: '#64748b', fontSize: 12 }}>{roomUnitLabel} {sectionCount}개</span>
-                  <button
-                    type="button"
-                    onClick={() => onOpenRoomConfigModal({
-                      roomId: room.id,
-                      facilityName: `${displayName}${templateSuffix}`,
-                      roomName: getRoomDisplayName(room),
-                      currentMode: allowModeSelection ? roomHousingMode : 'group',
-                      currentCount: sectionCount,
-                      allowModeSelection,
-                    })}
-                    style={{ marginLeft: 'auto', padding: '4px 8px', fontSize: 13, background: '#dcfce7', color: '#166534', border: 'none', borderRadius: 6, cursor: 'pointer' }}
-                  >
-                    {allowModeSelection ? '운영방식' : '칸 갯수 변경'}
-                  </button>
-                  <button type="button" onClick={() => onDeleteRoom(room.id)} style={{ padding: '4px 8px', fontSize: 13, background: '#fef2f2', color: '#b91c1c', border: 'none', borderRadius: 6, cursor: 'pointer' }}>삭제</button>
+                  <span style={{ fontSize: 15 }}>{getRoomDisplayName(room)}</span>
+                  <span style={{ color: '#64748b', fontSize: 14 }}>{roomUnitLabel} {sectionCount}개</span>
+                  <span style={{ color: '#64748b', fontSize: 14 }}>
+                    {allowModeSelection ? (roomHousingMode === 'stall' ? '스톨' : '군사') : '군사'}
+                  </span>
+                  {isEditMode && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenRoomConfigModal({
+                          roomId: room.id,
+                          facilityName: `${displayName}${templateSuffix}`,
+                          roomName: getRoomDisplayName(room),
+                          currentMode: allowModeSelection ? roomHousingMode : 'group',
+                          currentCount: sectionCount,
+                          allowModeSelection,
+                        });
+                        }}
+                        style={{ marginLeft: 'auto', padding: '4px 8px', fontSize: 14, background: '#dcfce7', color: '#166534', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                      >
+                        {allowModeSelection ? '운영방식' : '칸 갯수 변경'}
+                      </button>
+                    </>
+                  )}
                 </div>
                 {expandedRoom.has(room.id) && (
                   <div
@@ -1453,8 +1779,8 @@ function BarnRow({
                       marginLeft: 20,
                       marginTop: 6,
                       padding: '8px 10px',
-                      background: openingInputEnabled ? '#fffbeb' : '#f8fafc',
-                      border: openingInputEnabled ? '1px solid #fcd34d' : '1px solid #e2e8f0',
+                      background: isEditMode && openingInputEnabled ? '#fffbeb' : '#f8fafc',
+                      border: isEditMode && openingInputEnabled ? '1px solid #fcd34d' : '1px solid #e2e8f0',
                       borderRadius: 6,
                       display: 'flex',
                       flexWrap: 'wrap',
@@ -1462,31 +1788,49 @@ function BarnRow({
                     }}
                   >
                     {(room.sections ?? []).length === 0 && (
-                      <span style={{ fontSize: 14, color: '#94a3b8' }}>등록된 {roomUnitLabel}이 없습니다.</span>
+                      <span style={{ fontSize: 15, color: '#94a3b8' }}>등록된 {roomUnitLabel}이 없습니다.</span>
                     )}
-                    {(room.sections ?? []).map((sec) => (
-                      <button
-                        key={sec.id}
-                        type="button"
-                        onClick={() => openingInputEnabled && onOpenOpeningSectionModal(sec.id)}
-                        disabled={!openingInputEnabled}
-                        title="초기입력"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '3px 8px',
-                          borderRadius: 999,
-                          border: `1px solid ${!openingInputEnabled ? '#cbd5e1' : (hasOpeningInput(sec.id) ? '#86efac' : '#bfdbfe')}`,
-                          background: !openingInputEnabled ? '#f1f5f9' : (hasOpeningInput(sec.id) ? '#dcfce7' : '#fef3c7'),
-                          color: !openingInputEnabled ? '#94a3b8' : (hasOpeningInput(sec.id) ? '#166534' : '#92400e'),
-                          fontSize: 14,
-                          lineHeight: 1.4,
-                          cursor: openingInputEnabled ? 'pointer' : 'not-allowed',
-                        }}
-                      >
-                        {getSectionDisplayName(sec, roomUnitLabel)}
-                      </button>
-                    ))}
+                    {isEditMode
+                      ? (room.sections ?? []).map((sec) => (
+                          <button
+                            key={sec.id}
+                            type="button"
+                            onClick={() => openingInputEnabled && onOpenOpeningSectionModal(sec.id)}
+                            disabled={!openingInputEnabled}
+                            title="초기입력"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '3px 8px',
+                              borderRadius: 999,
+                              border: `1px solid ${!openingInputEnabled ? '#cbd5e1' : (hasOpeningInput(sec.id) ? '#86efac' : '#bfdbfe')}`,
+                              background: !openingInputEnabled ? '#f1f5f9' : (hasOpeningInput(sec.id) ? '#dcfce7' : '#fef3c7'),
+                              color: !openingInputEnabled ? '#94a3b8' : (hasOpeningInput(sec.id) ? '#166534' : '#92400e'),
+                              fontSize: 15,
+                              lineHeight: 1.4,
+                              cursor: openingInputEnabled ? 'pointer' : 'not-allowed',
+                            }}
+                          >
+                            {getSectionDisplayName(sec, roomUnitLabel)}
+                          </button>
+                        ))
+                      : (room.sections ?? []).map((sec) => (
+                          <span
+                            key={sec.id}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '3px 8px',
+                              borderRadius: 999,
+                              border: '1px solid #e2e8f0',
+                              background: '#f1f5f9',
+                              color: '#64748b',
+                              fontSize: 15,
+                            }}
+                          >
+                            {getSectionDisplayName(sec, roomUnitLabel)}
+                          </span>
+                        ))}
                   </div>
                 )}
               </div>

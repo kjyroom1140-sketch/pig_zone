@@ -6,6 +6,7 @@ import {
   completeFarmScheduleExecutionBirth,
   completeFarmScheduleExecutionMove,
   createFarmScheduleExecution,
+  deleteFarmScheduleExecution,
   directCompleteFarmScheduleExecutionBirth,
   directCompleteFarmScheduleExecutionMove,
   getFarmPigGroups,
@@ -14,7 +15,15 @@ import {
   getFarmStructureProduction,
   getFarmScheduleWorkPlansMaster,
   getFarmScheduleExecutions,
+  syncFarmScheduleExecutionsFromOpening,
   getFarmSectionInventoryBalances,
+  getFarmScheduleSortationDefinitions,
+  getFarmScheduleSortations,
+  getFarmScheduleJobtypeDefinitions,
+  createFarmScheduleSortationDefinition,
+  updateFarmScheduleSortationDefinition,
+  deleteFarmScheduleSortationDefinition,
+  createFarmScheduleSortation,
   type FarmPigGroupItem,
   type FarmScheduleExecutionItem,
   type FarmScheduleWorkPlanMasterItem,
@@ -74,6 +83,7 @@ export default function DashboardSchedulePage() {
   const [sectionHeadCountById, setSectionHeadCountById] = useState<Map<string, number>>(new Map());
   const [masterPlans, setMasterPlans] = useState<FarmScheduleWorkPlanMasterItem[]>([]);
   const [pendingExecutions, setPendingExecutions] = useState<FarmScheduleExecutionItem[]>([]);
+  const [completedOpeningExecutions, setCompletedOpeningExecutions] = useState<FarmScheduleExecutionItem[]>([]);
   const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
   const [selectedDateStr, setSelectedDateStr] = useState<string>(() => toDateStr(new Date()));
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
@@ -86,11 +96,26 @@ export default function DashboardSchedulePage() {
   const [createExecutionSectionLabel, setCreateExecutionSectionLabel] = useState('');
   const [createExecutionDate, setCreateExecutionDate] = useState('');
   const [createExecutionPlanIds, setCreateExecutionPlanIds] = useState<number[]>([]);
-  const [createExecutionWorkPlanId, setCreateExecutionWorkPlanId] = useState<number | ''>('');
-  const [createExecutionType, setCreateExecutionType] = useState<'birth' | 'move' | 'inspection'>('inspection');
-  const [createExecutionMemo, setCreateExecutionMemo] = useState('');
+  const [createExecutionFacilitySortations, setCreateExecutionFacilitySortations] = useState<{ id: number; name: string }[]>([]);
+  const [createExecutionJobtypeDefinitions, setCreateExecutionJobtypeDefinitions] = useState<{ id: number; name: string }[]>([]);
+  const [createExecutionStepSortationId, setCreateExecutionStepSortationId] = useState<number | ''>('');
+  const [createExecutionStepJobtypeId, setCreateExecutionStepJobtypeId] = useState<number | ''>('');
+  const [createExecutionWorkContent, setCreateExecutionWorkContent] = useState('');
   const [createExecutionSubmitting, setCreateExecutionSubmitting] = useState(false);
   const [createExecutionError, setCreateExecutionError] = useState<string | null>(null);
+  /** 구분 정의 모달 (예정 작업 모달 내 "+ 구분 추가"에서 열림) */
+  const [isSortationDefModalOpen, setIsSortationDefModalOpen] = useState(false);
+  const [sortationDefList, setSortationDefList] = useState<{ id: number; name: string; sort_order: number }[]>([]);
+  const [sortationDefListLoading, setSortationDefListLoading] = useState(false);
+  const [sortationDefNewName, setSortationDefNewName] = useState('');
+  const [sortationDefSaving, setSortationDefSaving] = useState(false);
+  const [sortationDefError, setSortationDefError] = useState<string | null>(null);
+  /** 구분 정의 모달에서 선택한 정의 id (적용 시 해당 시설에 구분 추가) */
+  const [sortationDefSelectedIds, setSortationDefSelectedIds] = useState<Set<number>>(new Set());
+  /** 선택한 시설에 이미 적용된 구분 정의 id (체크 표시 + 중복 추가 방지) */
+  const [sortationDefAlreadyAppliedIds, setSortationDefAlreadyAppliedIds] = useState<Set<number>>(new Set());
+  /** 구분 정의 수정 중인 id (설정 시 하단 폼이 수정 모드) */
+  const [sortationDefEditId, setSortationDefEditId] = useState<number | null>(null);
   const [pigGroups, setPigGroups] = useState<FarmPigGroupItem[]>([]);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
   const [completeMode, setCompleteMode] = useState<'existing' | 'direct'>('existing');
@@ -103,18 +128,31 @@ export default function DashboardSchedulePage() {
   const [completeDirectDate, setCompleteDirectDate] = useState('');
   const [completeSubmitting, setCompleteSubmitting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [openingDetailTarget, setOpeningDetailTarget] = useState<{
+    item: FarmScheduleExecutionItem;
+    sectionLabel: string;
+  } | null>(null);
+  const [isCellChoiceModalOpen, setIsCellChoiceModalOpen] = useState(false);
+  const [cellChoiceSectionId, setCellChoiceSectionId] = useState('');
+  const [cellChoiceSectionLabel, setCellChoiceSectionLabel] = useState('');
+  const [cellChoiceDate, setCellChoiceDate] = useState('');
+  const [cellChoiceCandidatePlanIds, setCellChoiceCandidatePlanIds] = useState<number[]>([]);
+  const [taskActionTarget, setTaskActionTarget] = useState<{
+    execution: FarmScheduleExecutionItem;
+    sectionId: string;
+    sectionLabel: string;
+  } | null>(null);
+  const [isEditExecutionModalOpen, setIsEditExecutionModalOpen] = useState(false);
+  const [editExecutionTarget, setEditExecutionTarget] = useState<FarmScheduleExecutionItem | null>(null);
   const [completeBirthCount, setCompleteBirthCount] = useState<number>(1);
   const [completeBirthSectionId, setCompleteBirthSectionId] = useState('');
   const [completeBirthGroupNo, setCompleteBirthGroupNo] = useState('');
   const [completeBirthOriginSowId, setCompleteBirthOriginSowId] = useState('');
   const [completeBirthMemo, setCompleteBirthMemo] = useState('');
-  const [completeMoveEventType, setCompleteMoveEventType] = useState<'full' | 'partial' | 'split' | 'merge' | 'entry' | 'shipment'>('full');
-  const [completeMoveSourceGroupId, setCompleteMoveSourceGroupId] = useState('');
-  const [completeMoveTargetGroupId, setCompleteMoveTargetGroupId] = useState('');
+  const [completeMoveEventType, setCompleteMoveEventType] = useState<'full' | 'partial' | 'split' | 'merge' | 'shipment'>('full');
   const [completeMoveFromSectionId, setCompleteMoveFromSectionId] = useState('');
   const [completeMoveToSectionId, setCompleteMoveToSectionId] = useState('');
   const [completeMoveHeadCount, setCompleteMoveHeadCount] = useState<number>(1);
-  const [completeMoveLineType, setCompleteMoveLineType] = useState<'move' | 'split_out' | 'split_in' | 'merge_in' | 'merge_out' | 'entry' | 'shipment'>('move');
   const [completeMoveMemo, setCompleteMoveMemo] = useState('');
   const [collapsedBuildings, setCollapsedBuildings] = useState<Set<string>>(new Set());
   const [collapsedBarns, setCollapsedBarns] = useState<Set<string>>(new Set());
@@ -148,6 +186,13 @@ export default function DashboardSchedulePage() {
           const name = String((item as { name?: unknown }).name ?? '').trim();
           if (Number.isFinite(id) && name) next.set(id, name);
         });
+        // 농장 선택 목록에 name이 비어 있으면 일정 목록에서 "사육시설"로만 보임. 전역 템플릿(production)으로 빈 칸 채움.
+        (Array.isArray(structureTemplates) ? structureTemplates : []).forEach((t) => {
+          const id = Number((t as { id?: unknown }).id);
+          const name = String((t as { name?: unknown }).name ?? '').trim();
+          const category = String((t as { category?: unknown }).category ?? '').toLowerCase();
+          if (Number.isFinite(id) && name && category === 'production' && !next.has(id)) next.set(id, name);
+        });
         setTemplateNameById(next);
         const colorMap = new Map<number, string>();
         (Array.isArray(structureTemplates) ? structureTemplates : []).forEach((t) => {
@@ -179,29 +224,46 @@ export default function DashboardSchedulePage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isCalendarModalOpen]);
 
-  const reloadPendingExecutions = useCallback(async () => {
+  const reloadExecutionLists = useCallback(async () => {
     if (!farmId) {
       setPendingExecutions([]);
+      setCompletedOpeningExecutions([]);
       return;
     }
     const end = new Date(weekStart);
     end.setDate(end.getDate() + 6);
     try {
-      const list = await getFarmScheduleExecutions(farmId, {
-        startDate: toDateStr(weekStart),
-        endDate: toDateStr(end),
-        status: 'pending',
-        limit: 2000,
-      });
-      setPendingExecutions(Array.isArray(list) ? list : []);
+      // opening 기반 자동 예정 동기화(멱등). 기존 데이터도 조회 시점에 보정한다.
+      await syncFarmScheduleExecutionsFromOpening(farmId).catch(() => null);
+      const [pendingList, completedList] = await Promise.all([
+        getFarmScheduleExecutions(farmId, {
+          startDate: toDateStr(weekStart),
+          endDate: toDateStr(end),
+          status: 'pending',
+          limit: 2000,
+        }),
+        getFarmScheduleExecutions(farmId, {
+          startDate: toDateStr(weekStart),
+          endDate: toDateStr(end),
+          status: 'completed',
+          limit: 2000,
+        }),
+      ]);
+      setPendingExecutions(Array.isArray(pendingList) ? pendingList : []);
+      setCompletedOpeningExecutions(
+        (Array.isArray(completedList) ? completedList : []).filter(
+          (item) => String(item.resultRefType ?? '').trim() === 'opening_section'
+        )
+      );
     } catch {
       setPendingExecutions([]);
+      setCompletedOpeningExecutions([]);
     }
   }, [farmId, weekStart]);
 
   useEffect(() => {
-    reloadPendingExecutions();
-  }, [reloadPendingExecutions]);
+    reloadExecutionLists();
+  }, [reloadExecutionLists]);
 
   useEffect(() => {
     if (!farmId) {
@@ -223,6 +285,51 @@ export default function DashboardSchedulePage() {
   }, [isCreateExecutionModalOpen, createExecutionSubmitting]);
 
   useEffect(() => {
+    if (!farmId || !isCreateExecutionModalOpen) {
+      setCreateExecutionFacilitySortations([]);
+      setCreateExecutionJobtypeDefinitions([]);
+      return;
+    }
+    getFarmScheduleJobtypeDefinitions(farmId)
+      .then((arr) => {
+        const list = (Array.isArray(arr) ? arr : [])
+          .map((d) => ({ id: (d as { id?: number }).id, name: (d as { name?: string }).name ?? '' }))
+          .filter((x): x is { id: number; name: string } => Number.isFinite(x.id) && !!x.name);
+        setCreateExecutionJobtypeDefinitions(list.sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => setCreateExecutionJobtypeDefinitions([]));
+    if (!createExecutionSectionId) {
+      setCreateExecutionFacilitySortations([]);
+      return;
+    }
+    const structureTemplateId = getSectionStructureTemplateId(tree, createExecutionSectionId);
+    if (structureTemplateId == null) {
+      setCreateExecutionFacilitySortations([]);
+      return;
+    }
+    getFarmScheduleSortations(farmId, structureTemplateId)
+      .then((arr) => {
+        const list = (Array.isArray(arr) ? arr : [])
+          .map((s) => {
+            const defId = (s as { sortation_definition_id?: number | null }).sortation_definition_id ?? (s as { id?: number }).id;
+            const name = (s as { sortation_name?: string | null }).sortation_name ?? (() => {
+              try {
+                const j = (s as { sortations?: unknown }).sortations;
+                if (Array.isArray(j) && j[0] && typeof j[0] === 'object' && j[0] !== null && 'name' in j[0]) {
+                  return String((j[0] as { name?: unknown }).name ?? '');
+                }
+              } catch { /* ignore */ }
+              return '—';
+            })();
+            return { id: defId, name };
+          })
+          .filter((x): x is { id: number; name: string } => Number.isFinite(x.id) && !!x.name);
+        setCreateExecutionFacilitySortations(list.sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => setCreateExecutionFacilitySortations([]));
+  }, [farmId, isCreateExecutionModalOpen, createExecutionSectionId, tree]);
+
+  useEffect(() => {
     if (!isCompleteModalOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !completeSubmitting) setIsCompleteModalOpen(false);
@@ -230,6 +337,84 @@ export default function DashboardSchedulePage() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isCompleteModalOpen, completeSubmitting]);
+
+  /** 구분 정의 순서: 위로 */
+  const moveSortationDefUp = useCallback(
+    async (idx: number) => {
+      if (!farmId || idx <= 0 || !sortationDefList[idx] || !sortationDefList[idx - 1]) return;
+      const current = sortationDefList[idx];
+      const prev = sortationDefList[idx - 1];
+      try {
+        await Promise.all([
+          updateFarmScheduleSortationDefinition(farmId, current.id, { sort_order: prev.sort_order }),
+          updateFarmScheduleSortationDefinition(farmId, prev.id, { sort_order: current.sort_order }),
+        ]);
+        const arr = await getFarmScheduleSortationDefinitions(farmId);
+        setSortationDefList(Array.isArray(arr) ? arr : []);
+      } catch (e) {
+        setSortationDefError(e instanceof Error ? e.message : '순서 변경 실패');
+      }
+    },
+    [farmId, sortationDefList]
+  );
+
+  /** 구분 정의 순서: 아래로 */
+  const moveSortationDefDown = useCallback(
+    async (idx: number) => {
+      if (!farmId || idx < 0 || idx >= sortationDefList.length - 1 || !sortationDefList[idx] || !sortationDefList[idx + 1]) return;
+      const current = sortationDefList[idx];
+      const next = sortationDefList[idx + 1];
+      try {
+        await Promise.all([
+          updateFarmScheduleSortationDefinition(farmId, current.id, { sort_order: next.sort_order }),
+          updateFarmScheduleSortationDefinition(farmId, next.id, { sort_order: current.sort_order }),
+        ]);
+        const arr = await getFarmScheduleSortationDefinitions(farmId);
+        setSortationDefList(Array.isArray(arr) ? arr : []);
+      } catch (e) {
+        setSortationDefError(e instanceof Error ? e.message : '순서 변경 실패');
+      }
+    },
+    [farmId, sortationDefList]
+  );
+
+  /** 구분 정의 삭제 */
+  const deleteSortationDef = useCallback(
+    async (id: number) => {
+      if (!farmId || !confirm('이 구분 정의를 삭제할까요?')) return;
+      try {
+        await deleteFarmScheduleSortationDefinition(farmId, id);
+        setSortationDefList((prev) => prev.filter((d) => d.id !== id));
+        setSortationDefSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        if (sortationDefEditId === id) {
+          setSortationDefEditId(null);
+          setSortationDefNewName('');
+        }
+      } catch (e) {
+        setSortationDefError(e instanceof Error ? e.message : '삭제 실패');
+      }
+    },
+    [farmId, sortationDefEditId]
+  );
+
+  /** 예정 삭제 (작업 선택 메뉴에서 호출) */
+  const handleTaskActionDelete = useCallback(async () => {
+    if (!taskActionTarget || !farmId) return;
+    const { execution } = taskActionTarget;
+    if (execution.status !== 'pending') return;
+    if (!confirm(`이 예정을 삭제할까요?\n\n${executionLabel(execution)}`)) return;
+    try {
+      await deleteFarmScheduleExecution(farmId, execution.id);
+      setPendingExecutions((prev) => prev.filter((e) => e.id !== execution.id));
+      closeTaskActionMenu();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '삭제에 실패했습니다.');
+    }
+  }, [taskActionTarget, farmId]);
 
   if (!farmId) {
     return (
@@ -278,7 +463,8 @@ export default function DashboardSchedulePage() {
     collapsedBarns,
     collapsedRooms
   );
-  const pendingBySectionDate = buildPendingExecutionMap(pendingExecutions);
+  const pendingBySectionDate = buildExecutionMap(pendingExecutions);
+  const completedOpeningBySectionDate = buildExecutionMap(completedOpeningExecutions);
   const collapseTargets = collectCollapseTargets(tree);
   const structureExpandStage = resolveStructureExpandStage(collapseTargets, collapsedBuildings, collapsedBarns, collapsedRooms);
   const calendarMonthLabel = `${calendarMonth.getFullYear()}년 ${calendarMonth.getMonth() + 1}월`;
@@ -287,9 +473,12 @@ export default function DashboardSchedulePage() {
   currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
   const activePigGroups = pigGroups.filter((g) => g.status === 'active' && Number(g.headCount) > 0);
   const sectionOptions = collectSectionOptions(tree, templateNameById);
-  const createExecutionCandidatePlans = (createExecutionPlanIds.length > 0
-    ? masterPlans.filter((p) => createExecutionPlanIds.includes(p.id))
-    : masterPlans);
+  /** 예정 작업 입력 모달: 구분 옵션 = 시설에 등록된 구분 전체 (구분 목록 선택 모달과 동일) */
+  const createExecutionSortationOptions = createExecutionFacilitySortations;
+  /** 예정 작업 입력 모달: 작업 유형 옵션 = schedule_jobtype_definitions 전체 */
+  const createExecutionJobtypeOptions = createExecutionStepSortationId === ''
+    ? []
+    : createExecutionJobtypeDefinitions;
   const completeDirectCandidatePlans = (completeDirectPlanIds.length > 0
     ? masterPlans.filter((p) => completeDirectPlanIds.includes(p.id))
     : masterPlans);
@@ -297,6 +486,7 @@ export default function DashboardSchedulePage() {
     completeMode === 'existing'
       ? (completeExecutionTarget?.executionType ?? 'inspection')
       : completeDirectExecutionType;
+  const openingDetailSummary = openingDetailTarget ? parseOpeningExecutionSummary(openingDetailTarget.item) : null;
 
   const applyPendingExecutionOptimistic = (item: FarmScheduleExecutionItem) => {
     setPendingExecutions((prev) => [item, ...prev]);
@@ -316,15 +506,13 @@ export default function DashboardSchedulePage() {
     const availablePlans = filteredCandidates.length > 0
       ? masterPlans.filter((p) => filteredCandidates.includes(p.id))
       : masterPlans;
-    const firstPlan = availablePlans.length > 0 ? availablePlans[0] : undefined;
-    const guessedType = inferExecutionTypeFromPlan(firstPlan);
     setCreateExecutionSectionId(sectionId);
     setCreateExecutionSectionLabel(sectionLabel);
     setCreateExecutionDate(date);
     setCreateExecutionPlanIds(filteredCandidates);
-    setCreateExecutionWorkPlanId(firstPlan?.id ?? '');
-    setCreateExecutionType(guessedType);
-    setCreateExecutionMemo('');
+    setCreateExecutionStepSortationId('');
+    setCreateExecutionStepJobtypeId('');
+    setCreateExecutionWorkContent('');
     setCreateExecutionError(null);
     setIsCreateExecutionModalOpen(true);
   };
@@ -337,8 +525,12 @@ export default function DashboardSchedulePage() {
   const submitCreateExecution = async () => {
     if (!farmId) return;
     if (!createExecutionSectionId || !createExecutionDate) return;
-    if (createExecutionWorkPlanId === '' || !Number.isFinite(createExecutionWorkPlanId)) {
-      setCreateExecutionError('작업 계획을 선택해 주세요.');
+    if (createExecutionStepSortationId === '' || !Number.isFinite(createExecutionStepSortationId)) {
+      setCreateExecutionError('구분을 선택해 주세요.');
+      return;
+    }
+    if (createExecutionStepJobtypeId === '' || !Number.isFinite(createExecutionStepJobtypeId)) {
+      setCreateExecutionError('작업유형을 선택해 주세요.');
       return;
     }
     setCreateExecutionSubmitting(true);
@@ -346,16 +538,22 @@ export default function DashboardSchedulePage() {
     try {
       const generatedKey = buildIdempotencyKey();
       const created = await createFarmScheduleExecution(farmId, {
-        workPlanId: createExecutionWorkPlanId,
+        sortationId: createExecutionStepSortationId,
+        jobtypeId: createExecutionStepJobtypeId,
+        workContent: createExecutionWorkContent.trim() || undefined,
         sectionId: createExecutionSectionId,
-        executionType: createExecutionType,
         scheduledDate: createExecutionDate,
         idempotencyKey: generatedKey,
-        memo: createExecutionMemo.trim() || undefined,
       });
-      applyPendingExecutionOptimistic(created);
+      const optimisticItem: FarmScheduleExecutionItem = {
+        ...created,
+        sortationName: createExecutionSortationOptions.find((o) => o.id === createExecutionStepSortationId)?.name ?? null,
+        jobtypeName: createExecutionJobtypeOptions.find((o) => o.id === createExecutionStepJobtypeId)?.name ?? null,
+        workContent: (createExecutionWorkContent.trim() || created.workContent) ?? null,
+      };
+      applyPendingExecutionOptimistic(optimisticItem);
       setIsCreateExecutionModalOpen(false);
-      await reloadPendingExecutions();
+      await reloadExecutionLists();
     } catch (e) {
       setCreateExecutionError(e instanceof Error ? e.message : '예정 등록 중 오류가 발생했습니다.');
     } finally {
@@ -379,16 +577,68 @@ export default function DashboardSchedulePage() {
     setCompleteBirthSectionId(sectionForExecution);
     setCompleteBirthGroupNo('');
     setCompleteBirthOriginSowId('');
-    setCompleteBirthMemo(execution.memo ?? '');
+    setCompleteBirthMemo('');
     setCompleteMoveEventType('full');
-    setCompleteMoveSourceGroupId(sourceCandidate?.id ?? '');
-    setCompleteMoveTargetGroupId('');
-    setCompleteMoveFromSectionId(sourceCandidate?.currentSectionId ?? sectionForExecution);
-    setCompleteMoveToSectionId(sectionId);
-    setCompleteMoveHeadCount(1);
-    setCompleteMoveLineType('move');
-    setCompleteMoveMemo(execution.memo ?? '');
+    setCompleteMoveFromSectionId(execution.sectionId ?? sectionForExecution);
+    setCompleteMoveToSectionId('');
+    const fromSecId = execution.sectionId ?? sectionForExecution;
+    setCompleteMoveHeadCount(sectionHeadCountById.get(fromSecId) ?? 1);
+    setCompleteMoveMemo('');
     setIsCompleteModalOpen(true);
+  };
+
+  const openCellChoiceModal = (
+    sectionId: string,
+    sectionLabel: string,
+    date: string,
+    candidatePlanIds?: number[]
+  ) => {
+    setCellChoiceSectionId(sectionId);
+    setCellChoiceSectionLabel(sectionLabel);
+    setCellChoiceDate(date);
+    setCellChoiceCandidatePlanIds((candidatePlanIds ?? []).filter((id) => Number.isFinite(id)));
+    setIsCellChoiceModalOpen(true);
+  };
+
+  const closeCellChoiceModal = () => {
+    setIsCellChoiceModalOpen(false);
+  };
+
+  const handleCellChoiceCreate = () => {
+    closeCellChoiceModal();
+    openCreateExecutionModal(cellChoiceSectionId, cellChoiceSectionLabel, cellChoiceDate, cellChoiceCandidatePlanIds);
+  };
+
+  const handleCellChoiceDirectComplete = () => {
+    closeCellChoiceModal();
+    openDirectCompleteModal(cellChoiceSectionId, cellChoiceSectionLabel, cellChoiceDate, cellChoiceCandidatePlanIds);
+  };
+
+  const openTaskActionMenu = (execution: FarmScheduleExecutionItem, sectionId: string, sectionLabel: string) => {
+    setTaskActionTarget({ execution, sectionId, sectionLabel });
+  };
+
+  const closeTaskActionMenu = () => {
+    setTaskActionTarget(null);
+  };
+
+  const handleTaskActionComplete = () => {
+    if (!taskActionTarget) return;
+    const { execution, sectionId, sectionLabel } = taskActionTarget;
+    closeTaskActionMenu();
+    openCompleteExecutionModal(execution, sectionId, sectionLabel);
+  };
+
+  const handleTaskActionEdit = () => {
+    if (!taskActionTarget) return;
+    setEditExecutionTarget(taskActionTarget.execution);
+    closeTaskActionMenu();
+    setIsEditExecutionModalOpen(true);
+  };
+
+  const closeEditExecutionModal = () => {
+    setIsEditExecutionModalOpen(false);
+    setEditExecutionTarget(null);
   };
 
   const openDirectCompleteModal = (
@@ -419,12 +669,9 @@ export default function DashboardSchedulePage() {
     setCompleteBirthOriginSowId('');
     setCompleteBirthMemo('');
     setCompleteMoveEventType('full');
-    setCompleteMoveSourceGroupId(sourceCandidate?.id ?? '');
-    setCompleteMoveTargetGroupId('');
-    setCompleteMoveFromSectionId(sourceCandidate?.currentSectionId ?? sectionId);
-    setCompleteMoveToSectionId(sectionId);
-    setCompleteMoveHeadCount(1);
-    setCompleteMoveLineType('move');
+    setCompleteMoveFromSectionId(sectionId);
+    setCompleteMoveToSectionId('');
+    setCompleteMoveHeadCount(sectionHeadCountById.get(sectionId) ?? 1);
     setCompleteMoveMemo('');
     setIsCompleteModalOpen(true);
   };
@@ -432,6 +679,14 @@ export default function DashboardSchedulePage() {
   const closeCompleteModal = () => {
     if (completeSubmitting) return;
     setIsCompleteModalOpen(false);
+  };
+
+  const openOpeningDetailModal = (item: FarmScheduleExecutionItem, sectionLabel: string) => {
+    setOpeningDetailTarget({ item, sectionLabel });
+  };
+
+  const closeOpeningDetailModal = () => {
+    setOpeningDetailTarget(null);
   };
 
   const submitCompleteExecution = async () => {
@@ -489,12 +744,8 @@ export default function DashboardSchedulePage() {
           });
         }
       } else if (activeCompleteExecutionType === 'move') {
-        if (!completeMoveSourceGroupId) {
-          setCompleteError('이동 완료에는 sourceGroupId가 필요합니다.');
-          return;
-        }
         if (!completeMoveToSectionId) {
-          setCompleteError('이동 완료에는 toSectionId가 필요합니다.');
+          setCompleteError('도착 칸을 선택하세요.');
           return;
         }
         if (!Number.isFinite(completeMoveHeadCount) || completeMoveHeadCount <= 0) {
@@ -517,12 +768,10 @@ export default function DashboardSchedulePage() {
             memo: completeMoveMemo.trim() || undefined,
             idempotencyKey,
             lines: [{
-              sourceGroupId: completeMoveSourceGroupId,
-              targetGroupId: completeMoveTargetGroupId.trim() || undefined,
               fromSectionId: completeMoveFromSectionId.trim() || undefined,
               toSectionId: completeMoveToSectionId,
               headCount: completeMoveHeadCount,
-              lineType: completeMoveLineType,
+              lineType: lineTypeFromEventType(completeMoveEventType),
             }],
           });
         } else {
@@ -536,12 +785,10 @@ export default function DashboardSchedulePage() {
             memo: completeMoveMemo.trim() || undefined,
             idempotencyKey,
             lines: [{
-              sourceGroupId: completeMoveSourceGroupId,
-              targetGroupId: completeMoveTargetGroupId.trim() || undefined,
               fromSectionId: completeMoveFromSectionId.trim() || undefined,
               toSectionId: completeMoveToSectionId,
               headCount: completeMoveHeadCount,
-              lineType: completeMoveLineType,
+              lineType: lineTypeFromEventType(completeMoveEventType),
             }],
           });
         }
@@ -550,7 +797,7 @@ export default function DashboardSchedulePage() {
         removePendingExecutionOptimistic(completeExecutionTarget.id);
       }
       setIsCompleteModalOpen(false);
-      await Promise.all([reloadPendingExecutions(), getFarmPigGroups(farmId).then((list) => setPigGroups(Array.isArray(list) ? list : [])).catch(() => undefined)]);
+      await Promise.all([reloadExecutionLists(), getFarmPigGroups(farmId).then((list) => setPigGroups(Array.isArray(list) ? list : [])).catch(() => undefined)]);
     } catch (e) {
       setCompleteError(e instanceof Error ? e.message : '완료 처리 중 오류가 발생했습니다.');
     } finally {
@@ -779,17 +1026,40 @@ export default function DashboardSchedulePage() {
                         {(() => {
                           const pendingItems =
                             row.kind === 'section' ? (pendingBySectionDate.get(`${row.id}|${d.date}`) ?? []) : [];
+                          const openingCompletedItems =
+                            row.kind === 'section' ? (completedOpeningBySectionDate.get(`${row.id}|${d.date}`) ?? []) : [];
                           if (row.kind === 'section') {
+                            const hasListItems = openingCompletedItems.length + pendingItems.length > 0;
                             return (
                               <div style={sectionCellContentStyle}>
-                                <div style={pendingListWrapStyle}>
+                                <div
+                                  style={{
+                                    ...pendingListWrapStyle,
+                                    ...(hasListItems ? { paddingTop: 0, paddingBottom: 0 } : {}),
+                                  }}
+                                >
+                                  {openingCompletedItems.slice(0, 2).map((item) => (
+                                    <button
+                                      key={`${row.key}-${d.date}-opening-completed-${item.id}`}
+                                      type="button"
+                                      style={completedOpeningListItemBtnStyle}
+                                      onClick={() => openOpeningDetailModal(item, row.label)}
+                                      title="초기값 등록 완료 상세 보기"
+                                    >
+                                      <span style={completedOpeningTypeTagStyle}>완료</span>
+                                      <span style={pendingListItemTextStyle}>{executionLabel(item)}</span>
+                                    </button>
+                                  ))}
+                                  {openingCompletedItems.length > 2 ? (
+                                    <div style={pendingListMoreStyle}>+{openingCompletedItems.length - 2}</div>
+                                  ) : null}
                                   {pendingItems.slice(0, 2).map((item) => (
                                     <button
                                       key={`${row.key}-${d.date}-pending-${item.id}`}
                                       type="button"
                                       style={pendingListItemBtnStyle}
-                                      onClick={() => openCompleteExecutionModal(item, row.id, row.label)}
-                                      title={`${executionLabel(item)} 완료 처리`}
+                                      onClick={() => openTaskActionMenu(item, row.id, row.label)}
+                                      title={`${executionLabel(item)} - 수정 또는 완료`}
                                     >
                                       <span style={pendingTypeTagStyle(item.executionType)}>{executionTypeLabel(item.executionType)}</span>
                                       <span style={pendingListItemTextStyle}>{executionLabel(item)}</span>
@@ -799,25 +1069,20 @@ export default function DashboardSchedulePage() {
                                     <div style={pendingListMoreStyle}>+{pendingItems.length - 2}</div>
                                   ) : null}
                                 </div>
-                                <button
-                                  type="button"
-                                  style={createExecutionBtnStyle}
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  style={cellEmptyZoneClickableStyle}
                                   onClick={() => openCreateExecutionModal(row.id, row.label, d.date, row.candidateWorkPlanIds)}
-                                >
-                                  예정 등록
-                                </button>
-                                <button
-                                  type="button"
-                                  style={directCompleteBtnStyle}
-                                  onClick={() => openDirectCompleteModal(row.id, row.label, d.date, row.candidateWorkPlanIds)}
-                                >
-                                  바로 완료
-                                </button>
+                                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCreateExecutionModal(row.id, row.label, d.date, row.candidateWorkPlanIds); } }}
+                                  title="칸을 눌러 예정 작업 입력"
+                                />
                               </div>
                             );
                           }
                           if (row.kind === 'room') {
-                            return <span style={planTextStyle}>{row.planLabel ?? ''}</span>;
+                            // room 행은 구조/요약 용도이며, 날짜별 실행건 표시는 section 행에서만 처리한다.
+                            return '';
                           }
                           return '';
                         })()}
@@ -831,8 +1096,8 @@ export default function DashboardSchedulePage() {
         </div>
       </div>
       {isCalendarModalOpen ? (
-        <div style={calendarModalBackdropStyle} onClick={() => setIsCalendarModalOpen(false)}>
-          <div style={calendarModalStyle} onClick={(e) => e.stopPropagation()}>
+        <div style={calendarModalBackdropStyle}>
+          <div style={calendarModalStyle}>
             <div style={calendarModalHeaderStyle}>
               <button type="button" onClick={() => moveCalendarMonth(-1)} style={calendarMonthMoveBtnStyle} aria-label="이전 달">‹</button>
               <strong style={calendarModalMonthTitleStyle}>{calendarMonthLabel}</strong>
@@ -862,63 +1127,107 @@ export default function DashboardSchedulePage() {
         </div>
       ) : null}
       {isCreateExecutionModalOpen ? (
-        <div style={createExecutionModalBackdropStyle} onClick={closeCreateExecutionModal}>
-          <div style={createExecutionModalStyle} onClick={(e) => e.stopPropagation()}>
+        <div style={createExecutionModalBackdropStyle}>
+          <div style={createExecutionModalStyle}>
             <div style={createExecutionHeaderStyle}>
-              <strong style={createExecutionTitleStyle}>예정 등록</strong>
+              <strong style={createExecutionTitleStyle}>예정 작업 입력</strong>
               <button type="button" style={createExecutionCloseIconStyle} onClick={closeCreateExecutionModal} disabled={createExecutionSubmitting}>✕</button>
             </div>
             <div style={createExecutionMetaStyle}>
-              <div><span style={createExecutionMetaKeyStyle}>칸</span><span style={createExecutionMetaValueStyle}>{createExecutionSectionLabel}</span></div>
+              <div><span style={createExecutionMetaKeyStyle}>대상</span><span style={createExecutionMetaValueStyle}>{getSectionFullPath(tree, templateNameById, createExecutionSectionId) ?? createExecutionSectionLabel}</span></div>
               <div><span style={createExecutionMetaKeyStyle}>날짜</span><span style={createExecutionMetaValueStyle}>{createExecutionDate}</span></div>
             </div>
-            <label style={createExecutionLabelStyle}>
-              작업 계획
+
+            <div style={createExecutionRowBoxStyle}>
+              <span>구분</span>
               <select
-                value={createExecutionWorkPlanId}
+                value={createExecutionStepSortationId === '' ? '' : createExecutionStepSortationId}
                 onChange={(e) => {
-                  const next = Number(e.target.value);
-                  if (!Number.isFinite(next) || next <= 0) {
-                    setCreateExecutionWorkPlanId('');
+                  const v = e.target.value;
+                  if (v === '__add_sortation__') {
+                    setCreateExecutionStepSortationId('');
+                    setIsSortationDefModalOpen(true);
+                    setSortationDefNewName('');
+                    setSortationDefError(null);
+                    setSortationDefSelectedIds(new Set());
+                    setSortationDefAlreadyAppliedIds(new Set());
+                    setSortationDefEditId(null);
+                    if (farmId) {
+                      setSortationDefListLoading(true);
+                      const structureTemplateId = getSectionStructureTemplateId(tree, createExecutionSectionId);
+                      Promise.all([
+                        getFarmScheduleSortationDefinitions(farmId),
+                        structureTemplateId != null ? getFarmScheduleSortations(farmId, structureTemplateId) : Promise.resolve([]),
+                      ])
+                        .then(([defArr, sortations]) => {
+                          setSortationDefList(Array.isArray(defArr) ? defArr : []);
+                          const defList = Array.isArray(defArr) ? defArr : [];
+                          const appliedIds = new Set<number>();
+                          for (const s of Array.isArray(sortations) ? sortations : []) {
+                            const defId = (s as { sortation_definition_id?: number | null }).sortation_definition_id;
+                            if (defId != null) {
+                              appliedIds.add(defId);
+                            } else {
+                              const name = (s as { sortation_name?: string | null }).sortation_name;
+                              if (name) {
+                                const def = defList.find((d) => d.name === name);
+                                if (def) appliedIds.add(def.id);
+                              }
+                            }
+                          }
+                          setSortationDefAlreadyAppliedIds(appliedIds);
+                          setSortationDefSelectedIds(appliedIds);
+                        })
+                        .catch(() => setSortationDefList([]))
+                        .finally(() => setSortationDefListLoading(false));
+                    } else {
+                      setSortationDefList([]);
+                    }
                     return;
                   }
-                  setCreateExecutionWorkPlanId(next);
-                  const selected = createExecutionCandidatePlans.find((p) => p.id === next);
-                  setCreateExecutionType(inferExecutionTypeFromPlan(selected));
+                  const next = v === '' ? '' : Number(v);
+                  setCreateExecutionStepSortationId(Number.isFinite(next) ? next : '');
+                  setCreateExecutionStepJobtypeId('');
                 }}
                 style={createExecutionSelectStyle}
                 disabled={createExecutionSubmitting}
               >
                 <option value="">선택</option>
-                {createExecutionCandidatePlans.map((p) => (
-                  <option key={`create-plan-${p.id}`} value={p.id}>{workPlanOptionLabel(p)}</option>
+                {createExecutionSortationOptions.map((o) => (
+                  <option key={`sort-${o.id}`} value={o.id}>{o.name}</option>
+                ))}
+                <option value="__add_sortation__">+ 구분 추가</option>
+              </select>
+            </div>
+            <div style={createExecutionRowBoxStyle}>
+              <span>작업유형</span>
+              <select
+                value={createExecutionStepJobtypeId === '' ? '' : createExecutionStepJobtypeId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const next = v === '' ? '' : Number(v);
+                  setCreateExecutionStepJobtypeId(Number.isFinite(next) ? next : '');
+                }}
+                style={createExecutionSelectStyle}
+                disabled={createExecutionSubmitting || createExecutionStepSortationId === ''}
+              >
+                <option value="">선택</option>
+                {createExecutionJobtypeOptions.map((o) => (
+                  <option key={`job-${o.id}`} value={o.id}>{o.name}</option>
                 ))}
               </select>
-            </label>
-            <label style={createExecutionLabelStyle}>
-              실행 유형
-              <select
-                value={createExecutionType}
-                onChange={(e) => setCreateExecutionType(e.target.value as 'birth' | 'move' | 'inspection')}
-                style={createExecutionSelectStyle}
+            </div>
+            <div style={createExecutionRowBoxStyle}>
+              <span>작업내용</span>
+              <input
+                type="text"
+                value={createExecutionWorkContent}
+                onChange={(e) => setCreateExecutionWorkContent(e.target.value)}
+                style={{ ...createExecutionSelectStyle, flex: 1 }}
                 disabled={createExecutionSubmitting}
-              >
-                <option value="birth">분만</option>
-                <option value="move">이동</option>
-                <option value="inspection">시설/점검</option>
-              </select>
-            </label>
-            <label style={createExecutionLabelStyle}>
-              메모
-              <textarea
-                value={createExecutionMemo}
-                onChange={(e) => setCreateExecutionMemo(e.target.value)}
-                style={createExecutionTextareaStyle}
-                maxLength={500}
-                disabled={createExecutionSubmitting}
-                placeholder="필요 시 메모를 입력하세요."
+                placeholder="작업 내용을 입력하세요 (선택)"
               />
-            </label>
+            </div>
             {createExecutionError ? <div style={createExecutionErrorStyle}>{createExecutionError}</div> : null}
             <div style={createExecutionActionStyle}>
               <button type="button" onClick={closeCreateExecutionModal} style={createExecutionCancelBtnStyle} disabled={createExecutionSubmitting}>취소</button>
@@ -926,7 +1235,7 @@ export default function DashboardSchedulePage() {
                 type="button"
                 onClick={submitCreateExecution}
                 style={createExecutionSubmitBtnStyle}
-                disabled={createExecutionSubmitting || createExecutionWorkPlanId === '' || createExecutionCandidatePlans.length === 0}
+                disabled={createExecutionSubmitting || createExecutionStepSortationId === '' || createExecutionStepJobtypeId === ''}
               >
                 {createExecutionSubmitting ? '등록 중...' : '등록'}
               </button>
@@ -934,9 +1243,302 @@ export default function DashboardSchedulePage() {
           </div>
         </div>
       ) : null}
+      {isSortationDefModalOpen ? (
+        <div style={createExecutionModalBackdropStyle}>
+          <div style={{ background: '#fff', borderRadius: 8, minWidth: 420, maxWidth: 520, maxHeight: '85vh', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ background: '#334155', color: '#f1f5f9', padding: '12px 20px', fontSize: 16, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>구분 목록 선택</span>
+              <button
+                type="button"
+                style={{ ...createExecutionCloseIconStyle, flexShrink: 0 }}
+                onClick={() => !sortationDefSaving && (setSortationDefAlreadyAppliedIds(new Set()), setIsSortationDefModalOpen(false))}
+                disabled={sortationDefSaving}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: 20, overflow: 'auto', flex: 1 }}>
+              <p style={{ margin: 0, marginBottom: 12, fontSize: 15, color: '#64748b', lineHeight: 1.5 }}>
+                선택한 시설의 구분 목록을 체크하여 정한 뒤 「확인」을 누르면 반영됩니다.
+              </p>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, color: '#475569' }}>구분 정의 목록</div>
+                {sortationDefListLoading ? (
+                  <div style={{ padding: 14, color: '#64748b', fontSize: 15 }}>조회 중...</div>
+                ) : sortationDefList.length === 0 ? (
+                  <div style={{ padding: 14, color: '#64748b', fontSize: 15 }}>등록된 구분이 없습니다. 아래에서 추가하세요.</div>
+                ) : (
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                    {sortationDefList.map((d, idx) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 12px',
+                          borderBottom: idx < sortationDefList.length - 1 ? '1px solid #f1f5f9' : 'none',
+                          background: '#fff',
+                        }}
+                      >
+                        <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', minWidth: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={sortationDefSelectedIds.has(d.id)}
+                            onChange={() => {
+                              setSortationDefSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(d.id)) next.delete(d.id);
+                                else next.add(d.id);
+                                return next;
+                              });
+                            }}
+                            style={{ width: 18, height: 18, flexShrink: 0, accentColor: '#2563eb' }}
+                            disabled={sortationDefSaving}
+                          />
+                          <span style={{ fontSize: 15 }}>{d.name}</span>
+                          {sortationDefAlreadyAppliedIds.has(d.id) ? (
+                            <span style={{ fontSize: 12, color: '#64748b' }}>(이미 적용됨)</span>
+                          ) : null}
+                        </label>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <button type="button" onClick={() => moveSortationDefUp(idx)} disabled={idx === 0} title="위로" style={{ padding: '4px 8px', fontSize: 14, lineHeight: 1, border: '1px solid #e2e8f0', borderRadius: 4, background: '#fff', cursor: idx === 0 ? 'not-allowed' : 'pointer', opacity: idx === 0 ? 0.5 : 1 }}>▲</button>
+                          <button type="button" onClick={() => moveSortationDefDown(idx)} disabled={idx === sortationDefList.length - 1} title="아래로" style={{ padding: '4px 8px', fontSize: 14, lineHeight: 1, border: '1px solid #e2e8f0', borderRadius: 4, background: '#fff', cursor: idx === sortationDefList.length - 1 ? 'not-allowed' : 'pointer', opacity: idx === sortationDefList.length - 1 ? 0.5 : 1 }}>▼</button>
+                          <button
+                            type="button"
+                            onClick={() => { setSortationDefEditId(d.id); setSortationDefNewName(d.name); }}
+                            style={{ padding: '4px 10px', fontSize: 14, border: '1px solid #e2e8f0', borderRadius: 4, background: '#fff', color: '#334155', cursor: 'pointer' }}
+                          >
+                            수정
+                          </button>
+                          <button type="button" onClick={() => deleteSortationDef(d.id)} style={{ padding: '4px 10px', fontSize: 14, border: '1px solid #fecaca', borderRadius: 4, background: '#fff', color: '#dc2626', cursor: 'pointer' }}>
+                            삭제
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, color: '#475569' }}>{sortationDefEditId != null ? '구분 정의 수정' : '구분 정의 추가'}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={sortationDefNewName}
+                    onChange={(e) => setSortationDefNewName(e.target.value)}
+                    placeholder="이름 (예: 비육, 모돈)"
+                    style={{ padding: '8px 12px', fontSize: 15, border: '1px solid #e2e8f0', borderRadius: 6, minWidth: 180 }}
+                    disabled={sortationDefSaving || !farmId}
+                  />
+                  {sortationDefEditId != null ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={sortationDefSaving || !farmId || !sortationDefNewName.trim()}
+                        onClick={async () => {
+                          if (!farmId || sortationDefEditId == null) return;
+                          const name = sortationDefNewName.trim();
+                          if (!name) return;
+                          setSortationDefSaving(true);
+                          setSortationDefError(null);
+                          try {
+                            await updateFarmScheduleSortationDefinition(farmId, sortationDefEditId, { name });
+                            const arr = await getFarmScheduleSortationDefinitions(farmId);
+                            setSortationDefList(Array.isArray(arr) ? arr : []);
+                            setSortationDefEditId(null);
+                            setSortationDefNewName('');
+                          } catch (e) {
+                            setSortationDefError(e instanceof Error ? e.message : '수정 실패');
+                          } finally {
+                            setSortationDefSaving(false);
+                          }
+                        }}
+                        style={{ padding: '8px 16px', fontSize: 15, border: 'none', borderRadius: 6, background: '#334155', color: '#fff', cursor: 'pointer' }}
+                      >
+                        {sortationDefSaving ? '저장 중...' : '수정'}
+                      </button>
+                      <button type="button" onClick={() => { setSortationDefEditId(null); setSortationDefNewName(''); }} style={{ padding: '8px 16px', fontSize: 15, border: '1px solid #e2e8f0', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>
+                        취소
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={sortationDefSaving || !farmId || !sortationDefNewName.trim()}
+                      onClick={async () => {
+                        const name = sortationDefNewName.trim();
+                        if (!name || !farmId) return;
+                        setSortationDefSaving(true);
+                        setSortationDefError(null);
+                        try {
+                          const nextSortOrder = sortationDefList.length === 0 ? 1 : Math.max(...sortationDefList.map((d) => d.sort_order), 0) + 1;
+                          const res = await createFarmScheduleSortationDefinition(farmId, { name, sort_order: nextSortOrder });
+                          setSortationDefList((prev) => [...prev, { id: res.id, name, sort_order: nextSortOrder }]);
+                          setSortationDefNewName('');
+                        } catch (e) {
+                          setSortationDefError(e instanceof Error ? e.message : '구분 추가 실패');
+                        } finally {
+                          setSortationDefSaving(false);
+                        }
+                      }}
+                      style={{ padding: '8px 16px', fontSize: 15, border: 'none', borderRadius: 6, background: '#334155', color: '#fff', cursor: 'pointer' }}
+                    >
+                      {sortationDefSaving ? '추가 중...' : '추가'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {sortationDefError ? (
+                <div style={{ marginTop: 8, fontSize: 14, color: '#dc2626' }}>{sortationDefError}</div>
+              ) : null}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: 16, borderTop: '1px solid #e2e8f0' }}>
+              <button
+                type="button"
+                onClick={() => !sortationDefSaving && (setSortationDefEditId(null), setSortationDefNewName(''), setSortationDefAlreadyAppliedIds(new Set()), setIsSortationDefModalOpen(false))}
+                style={{ padding: '10px 20px', fontSize: 15, border: '1px solid #e2e8f0', borderRadius: 6, background: '#fff', color: '#334155', cursor: sortationDefSaving ? 'not-allowed' : 'pointer' }}
+                disabled={sortationDefSaving}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={sortationDefSaving || !farmId || sortationDefSelectedIds.size === 0}
+                onClick={async () => {
+                  const structureTemplateId = getSectionStructureTemplateId(tree, createExecutionSectionId);
+                  if (!farmId || structureTemplateId == null) {
+                    setSortationDefError('대상 시설을 알 수 없습니다.');
+                    return;
+                  }
+                  setSortationDefSaving(true);
+                  setSortationDefError(null);
+                  try {
+                    const toAdd = sortationDefList.filter(
+                      (d) => sortationDefSelectedIds.has(d.id) && !sortationDefAlreadyAppliedIds.has(d.id)
+                    );
+                    const baseOrder = sortationDefAlreadyAppliedIds.size;
+                    for (let i = 0; i < toAdd.length; i++) {
+                      await createFarmScheduleSortation(farmId, {
+                        structure_template_id: structureTemplateId,
+                        sortation_definition_id: toAdd[i].id,
+                        sort_order: baseOrder + i + 1,
+                      });
+                    }
+                    const planList = await getFarmScheduleWorkPlansMaster(farmId);
+                    setMasterPlans(Array.isArray(planList) ? planList : []);
+                    if (structureTemplateId != null) {
+                      getFarmScheduleSortations(farmId, structureTemplateId)
+                        .then((arr) => {
+                          const list = (Array.isArray(arr) ? arr : [])
+                            .map((s) => {
+                              const id = (s as { id?: number }).id;
+                              const name = (s as { sortation_name?: string | null }).sortation_name ?? (() => {
+                                try {
+                                  const j = (s as { sortations?: unknown }).sortations;
+                                  if (Array.isArray(j) && j[0] && typeof j[0] === 'object' && j[0] !== null && 'name' in j[0]) {
+                                    return String((j[0] as { name?: unknown }).name ?? '');
+                                  }
+                                } catch { /* ignore */ }
+                                return '—';
+                              })();
+                              return { id, name };
+                            })
+                            .filter((x): x is { id: number; name: string } => Number.isFinite(x.id) && !!x.name);
+                          setCreateExecutionFacilitySortations(list.sort((a, b) => a.name.localeCompare(b.name)));
+                        })
+                        .catch(() => {});
+                    }
+                    setIsSortationDefModalOpen(false);
+                    setSortationDefSelectedIds(new Set());
+                    setSortationDefAlreadyAppliedIds(new Set());
+                    setSortationDefEditId(null);
+                    setSortationDefNewName('');
+                  } catch (e) {
+                    setSortationDefError(e instanceof Error ? e.message : '적용 실패');
+                  } finally {
+                    setSortationDefSaving(false);
+                  }
+                }}
+                style={{ padding: '10px 20px', fontSize: 15, border: 'none', borderRadius: 6, background: '#2563eb', color: '#fff', cursor: 'pointer' }}
+              >
+                {sortationDefSaving ? '적용 중...' : '확인'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isCellChoiceModalOpen ? (
+        <div style={createExecutionModalBackdropStyle}>
+          <div style={createExecutionModalStyle}>
+            <div style={createExecutionHeaderStyle}>
+              <strong style={createExecutionTitleStyle}>이 날짜·칸에 추가</strong>
+              <button type="button" style={createExecutionCloseIconStyle} onClick={closeCellChoiceModal}>✕</button>
+            </div>
+            <div style={createExecutionMetaStyle}>
+              <div><span style={createExecutionMetaKeyStyle}>칸</span><span style={createExecutionMetaValueStyle}>{cellChoiceSectionLabel}</span></div>
+              <div><span style={createExecutionMetaKeyStyle}>날짜</span><span style={createExecutionMetaValueStyle}>{cellChoiceDate}</span></div>
+            </div>
+            <div style={cellChoiceActionStyle}>
+              <button type="button" style={createExecutionBtnStyle} onClick={handleCellChoiceCreate}>
+                예정 등록
+              </button>
+              <button type="button" style={directCompleteBtnStyle} onClick={handleCellChoiceDirectComplete}>
+                바로 완료
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {taskActionTarget ? (
+        <div style={createExecutionModalBackdropStyle}>
+          <div style={createExecutionModalStyle}>
+            <div style={createExecutionHeaderStyle}>
+              <strong style={createExecutionTitleStyle}>작업 선택</strong>
+              <button type="button" style={createExecutionCloseIconStyle} onClick={closeTaskActionMenu}>✕</button>
+            </div>
+            <div style={createExecutionMetaStyle}>
+              <div><span style={createExecutionMetaKeyStyle}>작업</span><span style={createExecutionMetaValueStyle}>{executionLabel(taskActionTarget.execution)}</span></div>
+              <div><span style={createExecutionMetaKeyStyle}>칸</span><span style={createExecutionMetaValueStyle}>{taskActionTarget.sectionLabel}</span></div>
+            </div>
+            <div style={cellChoiceActionStyle}>
+              <button type="button" style={directCompleteBtnStyle} onClick={handleTaskActionComplete}>
+                완료 처리
+              </button>
+              <button type="button" style={createExecutionBtnStyle} onClick={handleTaskActionEdit}>
+                수정
+              </button>
+              <button
+                type="button"
+                style={{ ...createExecutionBtnStyle, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626' }}
+                onClick={handleTaskActionDelete}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isEditExecutionModalOpen && editExecutionTarget ? (
+        <div style={createExecutionModalBackdropStyle}>
+          <div style={createExecutionModalStyle}>
+            <div style={createExecutionHeaderStyle}>
+              <strong style={createExecutionTitleStyle}>예정 수정</strong>
+              <button type="button" style={createExecutionCloseIconStyle} onClick={closeEditExecutionModal}>✕</button>
+            </div>
+            <div style={createExecutionMetaStyle}>
+              <div><span style={createExecutionMetaKeyStyle}>작업</span><span style={createExecutionMetaValueStyle}>{executionLabel(editExecutionTarget)}</span></div>
+            </div>
+            <p style={{ padding: '8px 0', color: '#64748b', fontSize: 14 }}>수정 기능은 준비 중입니다.</p>
+            <div style={createExecutionActionStyle}>
+              <button type="button" onClick={closeEditExecutionModal} style={createExecutionCancelBtnStyle}>닫기</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isCompleteModalOpen ? (
-        <div style={completeModalBackdropStyle} onClick={closeCompleteModal}>
-          <div style={completeModalStyle} onClick={(e) => e.stopPropagation()}>
+        <div style={completeModalBackdropStyle}>
+          <div style={completeModalStyle}>
             <div style={createExecutionHeaderStyle}>
               <strong style={createExecutionTitleStyle}>{completeMode === 'direct' ? '바로 완료' : '완료 처리'}</strong>
               <button type="button" style={createExecutionCloseIconStyle} onClick={closeCompleteModal} disabled={completeSubmitting}>✕</button>
@@ -984,7 +1586,7 @@ export default function DashboardSchedulePage() {
                   >
                     <option value="birth">분만</option>
                     <option value="move">이동</option>
-                    <option value="inspection">시설/점검</option>
+                    <option value="inspection">시설·점검</option>
                   </select>
                 </label>
                 <div style={completeMoveGridStyle}>
@@ -1086,110 +1688,50 @@ export default function DashboardSchedulePage() {
                   이벤트 유형
                   <select
                     value={completeMoveEventType}
-                    onChange={(e) => setCompleteMoveEventType(e.target.value as 'full' | 'partial' | 'split' | 'merge' | 'entry' | 'shipment')}
-                    style={createExecutionSelectStyle}
-                    disabled={completeSubmitting}
-                  >
-                    <option value="full">full (전량 이동)</option>
-                    <option value="partial">partial (부분 이동)</option>
-                    <option value="split">split (분할)</option>
-                    <option value="merge">merge (합군)</option>
-                    <option value="entry">entry (입식)</option>
-                    <option value="shipment">shipment (출하)</option>
-                  </select>
-                </label>
-                <label style={createExecutionLabelStyle}>
-                  sourceGroupId
-                  <select
-                    value={completeMoveSourceGroupId}
                     onChange={(e) => {
-                      const next = e.target.value;
-                      setCompleteMoveSourceGroupId(next);
-                      const source = activePigGroups.find((g) => g.id === next);
-                      if (source?.currentSectionId) setCompleteMoveFromSectionId(source.currentSectionId);
+                      const v = e.target.value as 'full' | 'partial' | 'split' | 'merge' | 'shipment';
+                      setCompleteMoveEventType(v);
+                      if (v === 'full' && completeMoveFromSectionId) {
+                        setCompleteMoveHeadCount(sectionHeadCountById.get(completeMoveFromSectionId) ?? 1);
+                      }
                     }}
                     style={createExecutionSelectStyle}
                     disabled={completeSubmitting}
                   >
+                    <option value="full">전량 이동</option>
+                    <option value="partial">부분 이동</option>
+                    <option value="split">분할</option>
+                    <option value="merge">합군</option>
+                    {getSectionTemplateName(tree, templateNameById, completeMoveFromSectionId)?.includes('비육') === true && (
+                      <option value="shipment">출하</option>
+                    )}
+                  </select>
+                </label>
+                <label style={createExecutionLabelStyle}>
+                  도착 칸
+                  <select
+                    value={completeMoveToSectionId}
+                    onChange={(e) => setCompleteMoveToSectionId(e.target.value)}
+                    style={createExecutionSelectStyle}
+                    disabled={completeSubmitting}
+                  >
                     <option value="">선택</option>
-                    {activePigGroups.map((g) => (
-                      <option key={`complete-move-group-${g.id}`} value={g.id}>
-                        {`${g.groupNo} (${g.headCount}두)${g.currentSectionId ? ` / ${g.currentSectionId}` : ''}`}
-                      </option>
+                    {sectionOptions.map((s) => (
+                      <option key={`complete-move-to-${s.id}`} value={s.id}>{s.label}</option>
                     ))}
                   </select>
                 </label>
                 <label style={createExecutionLabelStyle}>
-                  targetGroupId (옵션)
+                  이동 마리수
                   <input
-                    type="text"
-                    value={completeMoveTargetGroupId}
-                    onChange={(e) => setCompleteMoveTargetGroupId(e.target.value)}
+                    type="number"
+                    min={1}
+                    value={completeMoveHeadCount}
+                    onChange={(e) => setCompleteMoveHeadCount(Number(e.target.value))}
                     style={createExecutionInputStyle}
                     disabled={completeSubmitting}
-                    placeholder="기존 target 돈군 UUID"
                   />
                 </label>
-                <div style={completeMoveGridStyle}>
-                  <label style={createExecutionLabelStyle}>
-                    fromSectionId (옵션)
-                    <select
-                      value={completeMoveFromSectionId}
-                      onChange={(e) => setCompleteMoveFromSectionId(e.target.value)}
-                      style={createExecutionSelectStyle}
-                      disabled={completeSubmitting}
-                    >
-                      <option value="">자동(돈군 현재칸)</option>
-                      {sectionOptions.map((s) => (
-                        <option key={`complete-move-from-${s.id}`} value={s.id}>{s.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={createExecutionLabelStyle}>
-                    toSectionId
-                    <select
-                      value={completeMoveToSectionId}
-                      onChange={(e) => setCompleteMoveToSectionId(e.target.value)}
-                      style={createExecutionSelectStyle}
-                      disabled={completeSubmitting}
-                    >
-                      <option value="">선택</option>
-                      {sectionOptions.map((s) => (
-                        <option key={`complete-move-to-${s.id}`} value={s.id}>{s.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div style={completeMoveGridStyle}>
-                  <label style={createExecutionLabelStyle}>
-                    이동 마리수
-                    <input
-                      type="number"
-                      min={1}
-                      value={completeMoveHeadCount}
-                      onChange={(e) => setCompleteMoveHeadCount(Number(e.target.value))}
-                      style={createExecutionInputStyle}
-                      disabled={completeSubmitting}
-                    />
-                  </label>
-                  <label style={createExecutionLabelStyle}>
-                    lineType
-                    <select
-                      value={completeMoveLineType}
-                      onChange={(e) => setCompleteMoveLineType(e.target.value as 'move' | 'split_out' | 'split_in' | 'merge_in' | 'merge_out' | 'entry' | 'shipment')}
-                      style={createExecutionSelectStyle}
-                      disabled={completeSubmitting}
-                    >
-                      <option value="move">move</option>
-                      <option value="split_out">split_out</option>
-                      <option value="split_in">split_in</option>
-                      <option value="merge_in">merge_in</option>
-                      <option value="merge_out">merge_out</option>
-                      <option value="entry">entry</option>
-                      <option value="shipment">shipment</option>
-                    </select>
-                  </label>
-                </div>
                 <label style={createExecutionLabelStyle}>
                   메모
                   <textarea
@@ -1218,6 +1760,67 @@ export default function DashboardSchedulePage() {
               >
                 {completeSubmitting ? '처리 중...' : '완료 처리'}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {openingDetailTarget ? (
+        <div style={openingDetailModalBackdropStyle}>
+          <div style={openingDetailModalStyle}>
+            <div style={createExecutionHeaderStyle}>
+              <strong style={createExecutionTitleStyle}>재고두수등록(초기값) 완료 상세</strong>
+              <button type="button" style={createExecutionCloseIconStyle} onClick={closeOpeningDetailModal}>✕</button>
+            </div>
+            <div style={openingDetailTitleSubStyle}>{openingDetailTarget.sectionLabel}</div>
+            <div style={openingDetailGridStyle}>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>작업명</span>
+                <span style={openingDetailValueStyle}>{executionLabel(openingDetailTarget.item)}</span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>전입일</span>
+                <span style={openingDetailValueStyle}>
+                  {openingDetailSummary?.entryDate || openingDetailTarget.item.scheduledDate || '-'}
+                </span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>두수</span>
+                <span style={openingDetailValueStyle}>
+                  {openingDetailSummary?.headCount != null ? `${openingDetailSummary.headCount}두` : '-'}
+                </span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>돈군번호</span>
+                <span style={openingDetailValueStyle}>{openingDetailSummary?.groupNo || '-'}</span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>출생일</span>
+                <span style={openingDetailValueStyle}>{openingDetailSummary?.birthDate || '-'}</span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>일령</span>
+                <span style={openingDetailValueStyle}>
+                  {openingDetailSummary?.ageDays != null ? `${openingDetailSummary.ageDays}일` : '-'}
+                </span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>모돈수</span>
+                <span style={openingDetailValueStyle}>
+                  {openingDetailSummary?.sowCount != null ? `${openingDetailSummary.sowCount}두` : '-'}
+                </span>
+              </div>
+              <div style={openingDetailRowStyle}>
+                <span style={openingDetailKeyStyle}>완료시각</span>
+                <span style={openingDetailValueStyle}>
+                  {openingDetailTarget.item.completedAt || openingDetailTarget.item.updatedAt || '-'}
+                </span>
+              </div>
+            </div>
+            <div style={openingDetailMemoStyle}>
+              {openingDetailSummary?.note ? `메모: ${openingDetailSummary.note}` : '메모 없음'}
+            </div>
+            <div style={createExecutionActionStyle}>
+              <button type="button" onClick={closeOpeningDetailModal} style={createExecutionCancelBtnStyle}>닫기</button>
             </div>
           </div>
         </div>
@@ -1317,7 +1920,50 @@ function executionLabel(item: FarmScheduleExecutionItem): string {
   return text || '일정';
 }
 
-function buildPendingExecutionMap(items: FarmScheduleExecutionItem[]): Map<string, FarmScheduleExecutionItem[]> {
+type OpeningExecutionSummary = {
+  entryDate?: string;
+  headCount?: number;
+  groupNo?: string;
+  birthDate?: string;
+  ageDays?: number;
+  sowCount?: number;
+  note?: string;
+};
+
+function parseOpeningExecutionSummary(_item: FarmScheduleExecutionItem): OpeningExecutionSummary {
+  // Parse memo from workContent or other available fields
+  const memo = (typeof _item.workContent === 'string' ? _item.workContent : '').trim();
+  if (!memo) return {};
+  const out: OpeningExecutionSummary = {};
+  memo.split(';').forEach((segment) => {
+    const token = segment.trim();
+    if (!token) return;
+    const eqIdx = token.indexOf('=');
+    if (eqIdx <= 0) return;
+    const key = token.slice(0, eqIdx).trim().toLowerCase();
+    const rawValue = token.slice(eqIdx + 1).trim();
+    if (!rawValue) return;
+    if (key === 'entrydate') out.entryDate = rawValue;
+    if (key === 'groupno') out.groupNo = rawValue;
+    if (key === 'birthdate') out.birthDate = rawValue;
+    if (key === 'note') out.note = rawValue;
+    if (key === 'headcount') {
+      const parsed = Number(rawValue);
+      if (Number.isFinite(parsed) && parsed >= 0) out.headCount = parsed;
+    }
+    if (key === 'agedays') {
+      const parsed = Number(rawValue);
+      if (Number.isFinite(parsed) && parsed >= 0) out.ageDays = parsed;
+    }
+    if (key === 'sowcount') {
+      const parsed = Number(rawValue);
+      if (Number.isFinite(parsed) && parsed >= 0) out.sowCount = parsed;
+    }
+  });
+  return out;
+}
+
+function buildExecutionMap(items: FarmScheduleExecutionItem[]): Map<string, FarmScheduleExecutionItem[]> {
   const map = new Map<string, FarmScheduleExecutionItem[]>();
   items.forEach((item) => {
     const sectionId = String(item.sectionId ?? '').trim();
@@ -1357,13 +2003,103 @@ function collectSectionOptions(
   return options;
 }
 
+/** sectionId에 해당하는 칸의 전체 경로: 건물 / 사(동) / 방 / 칸 */
+function getSectionFullPath(
+  tree: FarmBuilding[],
+  templateNameById: Map<number, string>,
+  sectionId: string
+): string | null {
+  const sid = sectionId.trim();
+  if (!sid) return null;
+  for (const building of tree) {
+    for (const barn of building.barns ?? []) {
+      const barnLabel = displayBarnName(barn, templateNameById);
+      for (const room of barn.rooms ?? []) {
+        const roomLabel = normalizeRoomName(room);
+        for (const section of room.sections ?? []) {
+          if (String(section.id) === sid) {
+            const sectionLabel = normalizeSectionName(
+              (section as { name?: string | null; sectionNumber?: number | null }).name,
+              (section as { name?: string | null; sectionNumber?: number | null }).sectionNumber
+            );
+            return `${building.name || '건물'} / ${barnLabel} / ${roomLabel} / ${sectionLabel}`;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function displayBarnName(barn: FarmBarn, templateNameById: Map<number, string>): string {
-  const mappedName = barn.structureTemplateId != null ? templateNameById.get(Number(barn.structureTemplateId)) : undefined;
+  // 백엔드는 사육시설에 barnType = 템플릿 ID 문자열("1","2") 저장. structureTemplateId 있거나 barnType이 숫자면 사육시설.
+  const templateId =
+    barn.structureTemplateId != null
+      ? Number(barn.structureTemplateId)
+      : /^[0-9]+$/.test(String(barn.barnType ?? ''))
+        ? Number(barn.barnType)
+        : null;
+  const mappedName = templateId != null ? templateNameById.get(templateId) : undefined;
   const rawBarnName = (barn.name ?? '').trim();
   const isGenericBarn = rawBarnName === '' || /^barn$/i.test(rawBarnName);
   const type = String(barn.barnType ?? '').toLowerCase();
-  const isProduction = type === 'production';
+  const isProduction = type === 'production' || templateId != null;
   return mappedName || (!isGenericBarn ? rawBarnName : '') || (isProduction ? '사육시설' : '일반시설');
+}
+
+/** 해당 칸(section)이 속한 사육시설( barn )의 템플릿 이름. 비육사 여부 판별용 */
+function getSectionTemplateName(
+  tree: FarmBuilding[],
+  templateNameById: Map<number, string>,
+  sectionId: string
+): string | undefined {
+  const sid = sectionId.trim();
+  if (!sid) return undefined;
+  for (const building of tree) {
+    for (const barn of building.barns ?? []) {
+      const tid = barn.structureTemplateId != null ? Number(barn.structureTemplateId) : (/^[0-9]+$/.test(String(barn.barnType ?? '')) ? Number(barn.barnType) : null);
+      const templateName = tid != null ? templateNameById.get(tid) : undefined;
+      for (const room of barn.rooms ?? []) {
+        for (const sec of room.sections ?? []) {
+          if (String(sec.id) === sid) return templateName ?? undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** sectionId가 속한 시설( barn )의 structure_template_id */
+function getSectionStructureTemplateId(tree: FarmBuilding[], sectionId: string): number | null {
+  const sid = sectionId.trim();
+  if (!sid) return null;
+  for (const building of tree) {
+    for (const barn of building.barns ?? []) {
+      const tid = barn.structureTemplateId != null ? Number(barn.structureTemplateId) : (/^[0-9]+$/.test(String(barn.barnType ?? '')) ? Number(barn.barnType) : NaN);
+      for (const room of barn.rooms ?? []) {
+        for (const sec of room.sections ?? []) {
+          if (String(sec.id) === sid) return Number.isFinite(tid) ? tid : null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** 이벤트 유형에 따라 이동 라인 유형(lineType) 자동 결정 */
+function lineTypeFromEventType(eventType: string): 'move' | 'split_out' | 'split_in' | 'merge_in' | 'merge_out' | 'entry' | 'shipment' {
+  switch (eventType) {
+    case 'split':
+      return 'split_out';
+    case 'merge':
+      return 'merge_in';
+    case 'shipment':
+      return 'shipment';
+    case 'entry':
+      return 'entry';
+    default:
+      return 'move';
+  }
 }
 
 function flattenStructureRows(
@@ -1744,21 +2480,26 @@ const createExecutionHeaderStyle: CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
+  margin: '-14px -14px 0 -14px',
+  padding: '12px 14px',
+  background: '#334155',
+  borderTopLeftRadius: 12,
+  borderTopRightRadius: 12,
 };
 
 const createExecutionTitleStyle: CSSProperties = {
   fontSize: 17,
   fontWeight: 800,
-  color: '#0f172a',
+  color: '#ffffff',
 };
 
 const createExecutionCloseIconStyle: CSSProperties = {
   width: 28,
   height: 28,
-  border: '1px solid #cbd5e1',
+  border: '1px solid rgba(255,255,255,0.4)',
   borderRadius: 8,
-  background: '#f8fafc',
-  color: '#334155',
+  background: 'rgba(255,255,255,0.15)',
+  color: '#ffffff',
   fontSize: 14,
   fontWeight: 700,
   cursor: 'pointer',
@@ -1791,7 +2532,24 @@ const createExecutionMetaValueStyle: CSSProperties = {
 
 const createExecutionLabelStyle: CSSProperties = {
   display: 'grid',
-  gap: 6,
+  gridTemplateColumns: '90px 1fr',
+  gap: 8,
+  alignItems: 'center',
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#334155',
+};
+
+/** 예정 작업 입력 모달: 라벨+셀렉트 한 행을 박스로 구분 */
+const createExecutionRowBoxStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '90px 1fr',
+  gap: 8,
+  alignItems: 'center',
+  padding: '8px 10px',
+  backgroundColor: '#f1f5f9',
+  borderRadius: 8,
+  marginBottom: 6,
   fontSize: 13,
   fontWeight: 700,
   color: '#334155',
@@ -1901,6 +2659,58 @@ const completeSubmitBtnStyle: CSSProperties = {
   cursor: 'pointer',
 };
 
+const openingDetailModalBackdropStyle: CSSProperties = {
+  ...createExecutionModalBackdropStyle,
+  zIndex: 83,
+};
+
+const openingDetailModalStyle: CSSProperties = {
+  ...createExecutionModalStyle,
+  width: 460,
+  maxWidth: 'calc(100vw - 24px)',
+};
+
+const openingDetailTitleSubStyle: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: '#475569',
+};
+
+const openingDetailGridStyle: CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  marginTop: 4,
+};
+
+const openingDetailRowStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '92px 1fr',
+  gap: 8,
+  fontSize: 13,
+  alignItems: 'center',
+};
+
+const openingDetailKeyStyle: CSSProperties = {
+  color: '#475569',
+  fontWeight: 700,
+};
+
+const openingDetailValueStyle: CSSProperties = {
+  color: '#0f172a',
+  fontWeight: 600,
+  overflowWrap: 'anywhere',
+};
+
+const openingDetailMemoStyle: CSSProperties = {
+  border: '1px solid #e2e8f0',
+  background: '#f8fafc',
+  borderRadius: 8,
+  padding: '8px 10px',
+  fontSize: 12,
+  lineHeight: 1.45,
+  color: '#334155',
+};
+
 const thStyle: CSSProperties = {
   fontFamily: 'inherit',
   color: '#1e3a8a',
@@ -1967,7 +2777,7 @@ const pendingListWrapStyle: CSSProperties = {
   display: 'grid',
   gap: 2,
   alignContent: 'start',
-  minHeight: 18,
+  minHeight: 0,
 };
 
 const pendingListItemBtnStyle: CSSProperties = {
@@ -1984,9 +2794,15 @@ const pendingListItemBtnStyle: CSSProperties = {
   textAlign: 'left',
 };
 
+const completedOpeningListItemBtnStyle: CSSProperties = {
+  ...pendingListItemBtnStyle,
+  border: '1px solid #86efac',
+  background: '#f0fdf4',
+};
+
 const pendingListItemTextStyle: CSSProperties = {
   fontFamily: 'inherit',
-  fontSize: 13,
+  fontSize: 14,
   fontWeight: 700,
   color: '#1f2937',
   whiteSpace: 'nowrap',
@@ -2015,9 +2831,16 @@ const pendingTypeTagBaseStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+const completedOpeningTypeTagStyle: CSSProperties = {
+  ...pendingTypeTagBaseStyle,
+  background: '#dcfce7',
+  color: '#166534',
+  borderColor: '#86efac',
+};
+
 const sectionCellContentStyle: CSSProperties = {
   display: 'grid',
-  gap: 6,
+  gap: 4,
   alignContent: 'start',
 };
 
@@ -2039,6 +2862,33 @@ const directCompleteBtnStyle: CSSProperties = {
   border: '1px solid #86efac',
   background: '#f0fdf4',
   color: '#15803d',
+};
+
+const cellEmptyZoneBtnStyle: CSSProperties = {
+  fontFamily: 'inherit',
+  width: '100%',
+  minHeight: 28,
+  border: '1px dashed #cbd5e1',
+  background: 'transparent',
+  color: '#64748b',
+  borderRadius: 8,
+  fontSize: 16,
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+/** 칸 빈 영역 클릭 시 예정 작업 입력 모달 열기. 내용 없을 때 셀 높이 40 유지(패딩 18 제외 22 → gap 4 + minHeight 18) */
+const cellEmptyZoneClickableStyle: CSSProperties = {
+  width: '100%',
+  minHeight: 18,
+  cursor: 'pointer',
+};
+
+const cellChoiceActionStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 12,
+  padding: '12px 0 0',
 };
 
 const structureRowContentStyle: CSSProperties = {

@@ -160,6 +160,8 @@ export type ScheduleWorkPlanItem = {
   criteriaId: number | null;
   criteriaContent: CriteriaContent | null;
   workContent?: string | null;
+  targetStructureTemplateId?: number | null;
+  targetStructureTemplateName?: string | null;
   createdAt: string;
   updatedAt: string;
   structureTemplateName?: string | null;
@@ -271,7 +273,7 @@ export async function getFarmScheduleWorkPlansMaster(farmId: string): Promise<Fa
 export type FarmScheduleExecutionItem = {
   id: string;
   farmId: string;
-  workPlanId: number;
+  workPlanId?: number | null;
   sectionId?: string | null;
   executionType: 'birth' | 'move' | 'inspection' | string;
   scheduledDate: string; // YYYY-MM-DD
@@ -281,7 +283,6 @@ export type FarmScheduleExecutionItem = {
   resultRefType?: string | null;
   resultRefId?: string | null;
   idempotencyKey?: string | null;
-  memo?: string | null;
   createdAt: string;
   updatedAt: string;
   workContent?: string | null;
@@ -312,13 +313,40 @@ export async function getFarmScheduleExecutions(
   return fetchApi(`/farms/${farmId}/schedule-executions${suffix}`);
 }
 
+export type SyncFarmScheduleExecutionsFromOpeningResult = {
+  synced: boolean;
+  createdExecutions: number;
+  scannedGroups: number;
+  skippedNoBirthDate: number;
+  reason?: string;
+};
+
+export async function syncFarmScheduleExecutionsFromOpening(
+  farmId: string
+): Promise<SyncFarmScheduleExecutionsFromOpeningResult> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/sync-opening`), {
+    method: 'POST',
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '일정 동기화 실패'}: ${err.detail}` : (err.error || '일정 동기화 실패');
+    throw new Error(msg);
+  }
+  return data as SyncFarmScheduleExecutionsFromOpeningResult;
+}
+
 export type CreateFarmScheduleExecutionBody = {
-  workPlanId: number;
+  /** 1회성 등록 시 생략. sortationId, jobtypeId, workContent 사용 */
+  workPlanId?: number;
+  sortationId?: number;
+  jobtypeId?: number;
+  workContent?: string;
   sectionId: string;
-  executionType: 'birth' | 'move' | 'inspection';
+  executionType?: 'birth' | 'move' | 'inspection';
   scheduledDate: string; // YYYY-MM-DD
   idempotencyKey?: string;
-  memo?: string;
 };
 
 export async function createFarmScheduleExecution(
@@ -338,6 +366,23 @@ export async function createFarmScheduleExecution(
     throw new Error(msg);
   }
   return data as FarmScheduleExecutionItem;
+}
+
+export async function deleteFarmScheduleExecution(
+  farmId: string,
+  executionId: string
+): Promise<{ deleted: boolean }> {
+  const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-executions/${executionId}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data as { error?: string; detail?: string };
+    const msg = err.detail ? `${err.error ?? '예정 삭제 실패'}: ${err.detail}` : (err.error || '예정 삭제 실패');
+    throw new Error(msg);
+  }
+  return data as { deleted: boolean };
 }
 
 export type CompleteFarmScheduleExecutionBirthBody = {
@@ -380,7 +425,9 @@ export async function completeFarmScheduleExecutionBirth(
 }
 
 export type CompleteFarmScheduleExecutionMoveLine = {
-  sourceGroupId: string;
+  /** 생략 시 출발 칸(fromSectionId)의 유일한 돈군으로 자동 결정 */
+  sourceGroupId?: string;
+  /** 생략 시 도착 칸(toSectionId)에 기존 돈군이 있으면 해당 돈군, 없으면 신규 생성 */
   targetGroupId?: string;
   fromSectionId?: string;
   toSectionId: string;
@@ -500,6 +547,7 @@ export async function createFarmScheduleWorkPlanMaster(
     criteria_id: number | null;
     criteria_content: CriteriaContent | null;
     work_content?: string | null;
+    target_structure_template_id?: number | null;
   }
 ): Promise<{ id: number }> {
   const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master`), {
@@ -527,6 +575,7 @@ export async function updateFarmScheduleWorkPlanMaster(
     criteria_id?: number | null;
     criteria_content?: CriteriaContent | null;
     work_content?: string | null;
+    target_structure_template_id?: number | null;
   }
 ): Promise<void> {
   const res = await apiFetch(apiUrl(`/farms/${farmId}/schedule-work-plans-master/${id}`), {
@@ -1182,6 +1231,7 @@ export type OpeningSectionSaveKind = 'breedingGestation' | 'farrowing' | 'other'
 export type OpeningSectionSaveBody = {
   kind: OpeningSectionSaveKind;
   entryDate: string; // YYYY-MM-DD
+  replaceExisting?: boolean;
   sows?: OpeningSowInput[];
   group?: {
     headCount: number;
@@ -1205,6 +1255,18 @@ export type OpeningSectionSaveResult = {
   groupId?: string;
   groupNo?: string;
   birthDate?: string;
+};
+
+export type OpeningSectionDeleteResult = {
+  deleted: boolean;
+  farmId: string;
+  sectionId: string;
+  ledgerRowsDeleted: number;
+  movementLineRowsDeleted: number;
+  movementEventRowsDeleted: number;
+  groupRowsDeleted: number;
+  scheduleExecutionRowsDeleted: number;
+  sowRowsDetached: number;
 };
 
 export type OpeningValidateResult = {
@@ -1261,7 +1323,17 @@ export async function saveFarmOpeningSection(
   });
 }
 
-export async function getFarmStructureProduction(farmId: string): Promise<{ id: string; templateId: number; name: string; weight?: string; optimalDensity?: number; description?: string }[]> {
+export async function deleteFarmOpeningSection(
+  farmId: string,
+  sectionId: string
+): Promise<OpeningSectionDeleteResult> {
+  return fetchApi(`/farms/${farmId}/bootstrap/opening/sections/${sectionId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** farm_structure 테이블에서 해당 농장의 production 목록 조회. templateId = structure_templates.id */
+export async function getFarmStructureProduction(farmId: string): Promise<{ id: string; templateId: number; name?: string | null; weight?: string; optimalDensity?: number; description?: string }[]> {
   return fetchApi(`/farm-structure/${farmId}/production`);
 }
 
@@ -1400,6 +1472,18 @@ export async function updateFarmBarn(
 
 export async function deleteFarmBarn(farmId: string, barnId: string): Promise<{ message: string }> {
   return fetchApi(`/farm-facilities/${farmId}/barns/${barnId}`, { method: 'DELETE' });
+}
+
+export async function reorderFarmBarns(
+  farmId: string,
+  buildingId: string,
+  barnIds: string[]
+): Promise<{ message: string }> {
+  return fetchApi(`/farm-facilities/${farmId}/buildings/${buildingId}/barns-reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ barnIds }),
+  });
 }
 
 export async function createFarmRoomsBulk(

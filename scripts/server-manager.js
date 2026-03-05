@@ -69,9 +69,14 @@ function startInWindows(useHttps) {
   const backendPath = path.join(ROOT, 'backend');
   const frontendPath = path.join(ROOT, 'frontend');
 
-  const esc = (p) => p.replace(/"/g, '""');
+  const runBackendBat = path.join(ROOT, 'run-backend.bat');
   if (fs.existsSync(path.join(backendPath, 'go.mod'))) {
-    spawn(`cmd /c start "Go API :8080" cmd /k cd /d "${esc(backendPath)}" && set PORT=8080 && go run ./cmd/api`, [], { shell: true, stdio: 'ignore' });
+    if (isWin && fs.existsSync(runBackendBat)) {
+      spawn(`cmd /c start "Go API :8080" "${runBackendBat.replace(/"/g, '""')}"`, [], { shell: true, stdio: 'ignore', cwd: ROOT });
+    } else {
+      const esc = (p) => p.replace(/"/g, '""');
+      spawn(`cmd /c start "Go API :8080" cmd /k cd /d "${esc(backendPath)}" && set PORT=8080 && go run ./cmd/api & pause`, [], { shell: true, stdio: 'ignore' });
+    }
     console.log('  Go API  → http://localhost:8080 (창 열림, go run)');
   }
   if (fs.existsSync(path.join(frontendPath, 'package.json'))) {
@@ -123,10 +128,14 @@ function startBackendOnly() {
     showMenu();
     return;
   }
-  const esc = (p) => p.replace(/"/g, '""');
+  const runBackendBat = path.join(ROOT, 'run-backend.bat');
   console.log('\n  [Backend만 시작...]\n');
-  if (isWin) {
-    spawn(`cmd /c start "Go API :8080" cmd /k cd /d "${esc(backendPath)}" && set PORT=8080 && go run ./cmd/api`, [], { shell: true, stdio: 'ignore' });
+  if (isWin && fs.existsSync(runBackendBat)) {
+    spawn(`cmd /c start "Go API :8080" "${runBackendBat.replace(/"/g, '""')}"`, [], { shell: true, stdio: 'ignore', cwd: ROOT });
+    console.log('  Go API → http://localhost:8080 (창 열림, go run)\n');
+  } else if (isWin) {
+    const esc = (p) => p.replace(/"/g, '""');
+    spawn(`cmd /c start "Go API :8080" cmd /k cd /d "${esc(backendPath)}" && set PORT=8080 && go run ./cmd/api & pause`, [], { shell: true, stdio: 'ignore' });
     console.log('  Go API → http://localhost:8080 (창 열림, go run)\n');
   } else {
     const go = spawn('go run ./cmd/api', [], {

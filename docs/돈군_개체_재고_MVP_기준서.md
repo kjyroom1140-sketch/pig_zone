@@ -22,6 +22,8 @@
   - 현재 위치(`current_section_id`)
   - 현재 상태(`status`)
 - 이동 경로/변경 내역은 `pig_movement_events`, `pig_movement_lines`에만 저장한다.
+- 이동 실행/일정 표시의 위치 단위는 **항상 칸(section)** 으로 고정한다.
+- 방(room) 레벨 표시는 실행건이 아니라 구조/요약 정보로만 취급한다.
 - 비권장: 돈군 테이블 단일 행에 이동 경로(JSON/문자열) 누적 저장.
 
 ### 1-2. 운영 초기값 입력 정책 (확정)
@@ -36,6 +38,8 @@
   - `전입일(entryDate)` 필수
   - `출생일(birthDate)` 직접 입력 또는 `일령(ageDays)` 직접 입력 중 1개 필수
   - `일령` 입력 시 `출생일 = 전입일 - 일령`으로 계산 저장
+  - `전입일`을 선택/변경하면, 전입일 시점의 일령 기준으로 `출생일`을 자동 역산한다.
+  - `출생일`이 확정되면 `일령`은 오늘 기준(`today - birthDate`)으로 자동 재계산해 표시한다.
 - 초기입력의 돈군번호(`group_no`)는 사용자 수동 입력이 아니라 **모달 저장 시 서버 자동생성**을 기본 정책으로 한다.
 - 모달 저장 시 해당 섹션 데이터는 단일 트랜잭션으로 즉시 반영한다.
   - `sows`(모돈) 등록/배치
@@ -271,6 +275,8 @@
 4. `POST /schedule-executions` 호출
 5. `schedule_executions`에 `status='pending'`으로 저장
 6. 저장 직후 해당 셀에 예정건 표시
+   - 표시키: `section_id + scheduled_date`
+   - 방(room) 행은 실행건 표시 대상이 아님(요약/안내만 허용)
 
 #### B) 완료 등록 (캘린더 셀에서 바로)
 1. 작업자가 캘린더 셀의 예정건 선택(또는 "바로 완료" 선택)
@@ -318,20 +324,33 @@
 
 - 초기입력에서 돈군이 형성되면 `pig_groups`에 저장되어야 하며, 동시에 재고 원장과 날짜 정합성을 맞춘다.
 - 기준 날짜 정책:
-  - 사용자가 전입일(입식일)을 입력한 경우: 해당 날짜를 opening 반영 기준일로 사용
-  - 미입력 시: 서버 처리 시각(`NOW()`) 사용
+  - `전입일(입식일)`은 필수이며, 해당 날짜를 opening 반영 기준일로 사용
+  - 전입일 변경 시 `출생일`은 자동 역산, `일령`은 오늘 기준으로 자동 재계산한다.
 - 최소 반영 컬럼:
   - `pig_groups.current_section_id` (현재 위치)
   - `pig_groups.birth_date` (돈군 출생일)
   - `section_inventory_ledger.occurred_at` (opening IN 발생일)
-- 일정/이동 이력 연계 저장(권장 -> 표준화 대상):
+- 출생일 저장 위치 기준(현재 구현):
+  - **정본(원천)**: `pig_groups.birth_date` (돈군 단위 출생일)
+  - **개체 정본**: `sows.birth_date` (모돈 개체 출생일)
+  - **화면 스냅샷(보조)**: `farm_sections.birthDate` (구조 화면 표시/검색 보조값, 정본 아님)
+  - 일정/이력 연계 시 날짜 기준은 `pig_groups.birth_date`, `section_inventory_ledger.occurred_at`, `pig_movement_events.moved_at`를 우선 사용
+- 일정/이동/실행 이력 연계 저장(표준):
   - `pig_movement_events.event_type='entry'`
   - `pig_movement_events.moved_at = 전입일(미입력 시 NOW())`
   - `pig_movement_lines.line_type='entry'`
+  - `schedule_executions` 완료건 자동 생성
+    - `execution_type='inspection'`, `status='completed'`
+    - `result_ref_type='opening_section'`, `result_ref_id=section_id`
+    - `scheduled_date=entryDate`, `completed_by=저장 사용자`
+    - `work_plan_id`는 농장 단위 자동 work plan(`재고두수등록(초기값)`)을 재사용/생성하여 연결
   - 필요 시 `farm_sections.entryDate`를 동일 날짜로 동기화해 구조 화면과 일자 정합성 유지
 - 현재 구현 기준:
   - 섹션 저장 성공 시 `farm_initialized_at`를 설정한다.
-  - `schedule_executions` 완료건 자동 생성 연계는 별도 구현 대상으로 관리한다.
+  - 섹션 저장 성공 시 `schedule_executions(completed)` 1건을 즉시 생성한다.
+  - 섹션 저장 API 응답에 `scheduleExecutionId`를 포함한다.
+  - 레거시 DB에서 `farm_sections.birthDate` 컬럼이 없을 수 있으므로, 필요 시 `scripts/alter_farm_sections_add_entry_birth_date.sql` 적용을 권장한다.
+  - 운영 반영 체크리스트: `docs/schedule_executions_rollout_checklist.md`
 
 ### `/farm/move` (보조)
 - 이벤트 이력 조회/검색
@@ -439,6 +458,7 @@
 > 1. `schedule_work_plans`(계획) 기준으로 실행건 생성  
 > 2. 생성된 실행건은 `schedule_executions.status='pending'`(예정)으로 저장  
 > 3. 일정관리 화면은 `pending` 실행건을 캘린더에 표시  
+>    - 표시 단위는 **칸(section)** 이며, `section_id + scheduled_date`가 일치하는 셀에만 노출  
 > 4. 작업자가 분만/이동 완료 처리 API 호출  
 > 5. 도메인 반영(돈군/원장/현재고) 성공 후 같은 실행건을 `completed`로 전이  
 > 6. `result_ref_type/result_ref_id`로 완료 결과(분만/이동 이벤트) 연결

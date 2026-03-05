@@ -17,7 +17,7 @@ import (
 type farmScheduleExecutionItem struct {
 	ID             string  `json:"id"`
 	FarmID         string  `json:"farmId"`
-	WorkPlanID     int     `json:"workPlanId"`
+	WorkPlanID     *int    `json:"workPlanId,omitempty"`
 	SectionID      *string `json:"sectionId,omitempty"`
 	ExecutionType  string  `json:"executionType"`
 	ScheduledDate  string  `json:"scheduledDate"`
@@ -27,13 +27,144 @@ type farmScheduleExecutionItem struct {
 	ResultRefType  *string `json:"resultRefType,omitempty"`
 	ResultRefID    *string `json:"resultRefId,omitempty"`
 	IdempotencyKey *string `json:"idempotencyKey,omitempty"`
-	Memo           *string `json:"memo,omitempty"`
 	CreatedAt      string  `json:"createdAt"`
 	UpdatedAt      string  `json:"updatedAt"`
 	WorkContent    *string `json:"workContent,omitempty"`
 	SortationName  *string `json:"sortationName,omitempty"`
 	JobtypeName    *string `json:"jobtypeName,omitempty"`
 	CriteriaName   *string `json:"criteriaName,omitempty"`
+}
+
+type openingScheduleSyncGroup struct {
+	GroupID   uuid.UUID
+	GroupNo   string
+	SectionID uuid.UUID
+	BirthDate *time.Time
+}
+
+func collectOpeningScheduleSyncGroupsTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID) ([]openingScheduleSyncGroup, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT ON (pg.id)
+			pg.id::text,
+			COALESCE(pg.group_no, ''),
+			pg.current_section_id::text,
+			COALESCE(pg.birth_date, fs."birthDate", fs."entryDate")
+		FROM pig_groups pg
+		JOIN section_inventory_ledger l
+		  ON l.farm_id = pg.farm_id
+		 AND l.pig_group_id = pg.id
+		 AND l.ref_type = 'opening'
+		LEFT JOIN farm_sections fs ON fs.id = pg.current_section_id
+		WHERE pg.farm_id = $1
+		  AND COALESCE(pg.is_deleted, false) = false
+		  AND pg.current_section_id IS NOT NULL
+		ORDER BY pg.id, l.created_at DESC
+	`, farmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]openingScheduleSyncGroup, 0)
+	for rows.Next() {
+		var groupIDStr string
+		var groupNo string
+		var sectionIDStr string
+		var baseDate sql.NullTime
+		if err := rows.Scan(&groupIDStr, &groupNo, &sectionIDStr, &baseDate); err != nil {
+			return nil, err
+		}
+		groupID, err := uuid.Parse(strings.TrimSpace(groupIDStr))
+		if err != nil {
+			continue
+		}
+		sectionID, err := uuid.Parse(strings.TrimSpace(sectionIDStr))
+		if err != nil {
+			continue
+		}
+		var birthDate *time.Time
+		if baseDate.Valid {
+			d := baseDate.Time
+			birthDate = &d
+		}
+		out = append(out, openingScheduleSyncGroup{
+			GroupID:   groupID,
+			GroupNo:   strings.TrimSpace(groupNo),
+			SectionID: sectionID,
+			BirthDate: birthDate,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// FarmScheduleExecutionsSyncOpening POST /api/farms/:farmId/schedule-executions/sync-opening
+func (h *Handler) FarmScheduleExecutionsSyncOpening(w http.ResponseWriter, r *http.Request) {
+	farmID, _, ok := h.parseFarmIDAndAuth(w, r)
+	if !ok {
+		return
+	}
+
+	writeSyncOpeningFail := func(reason string) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"synced":             false,
+			"createdExecutions":  0,
+			"scannedGroups":      0,
+			"skippedNoBirthDate": 0,
+			"reason":             reason,
+		})
+	}
+
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeSyncOpeningFail("transaction begin failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	if !hasTableTx(r.Context(), tx, "schedule_executions") || !hasTableTx(r.Context(), tx, "schedule_work_plans") {
+		writeSyncOpeningFail("required table missing")
+		return
+	}
+	if !hasTableTx(r.Context(), tx, "pig_groups") || !hasTableTx(r.Context(), tx, "section_inventory_ledger") {
+		writeSyncOpeningFail("opening tables not available")
+		return
+	}
+
+	groups, err := collectOpeningScheduleSyncGroupsTx(r.Context(), tx, farmID)
+	if err != nil {
+		writeSyncOpeningFail("opening 그룹 조회 실패: " + err.Error())
+		return
+	}
+
+	totalCreated := 0
+	skippedNoBirthDate := 0
+	for _, g := range groups {
+		if g.BirthDate == nil {
+			skippedNoBirthDate++
+			continue
+		}
+		created, err := createOpeningAutoPendingExecutionsTx(r.Context(), tx, farmID, g.SectionID, &g.GroupID, g.GroupNo, *g.BirthDate)
+		if err != nil {
+			writeSyncOpeningFail("opening 예정 생성 실패: " + err.Error())
+			return
+		}
+		totalCreated += created
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeSyncOpeningFail("transaction commit failed: " + err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"synced":             true,
+		"createdExecutions":  totalCreated,
+		"scannedGroups":      len(groups),
+		"skippedNoBirthDate": skippedNoBirthDate,
+	})
 }
 
 // FarmScheduleExecutionsList GET /api/farms/:farmId/schedule-executions
@@ -43,7 +174,18 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	q := `
+	// 1회성 지원: se.sortation_id 컬럼 있으면 COALESCE 사용, 없으면 swp만 (마이그레이션 미적용 시)
+	var hasOneOffCols bool
+	_ = h.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'schedule_executions' AND column_name = 'sortation_id'
+		)
+	`).Scan(&hasOneOffCols)
+
+	var q string
+	if hasOneOffCols {
+		q = `
 		SELECT
 			se.id::text,
 			se.farm_id::text,
@@ -57,7 +199,36 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 			se.result_ref_type,
 			se.result_ref_id::text,
 			se.idempotency_key,
-			se.memo,
+			se.created_at,
+			se.updated_at,
+			COALESCE(swp.work_content, se.work_content) AS work_content,
+			COALESCE(sd.name, sd2.name) AS sortation_name,
+			COALESCE(jd.name, jd2.name) AS jobtype_name,
+			cd.name AS criteria_name
+		FROM schedule_executions se
+		LEFT JOIN schedule_work_plans swp ON swp.id = se.work_plan_id
+		LEFT JOIN schedule_sortation_definitions sd ON sd.id = swp.sortation_id
+		LEFT JOIN schedule_sortation_definitions sd2 ON sd2.id = se.sortation_id
+		LEFT JOIN schedule_jobtype_definitions jd ON jd.id = swp.jobtype_id
+		LEFT JOIN schedule_jobtype_definitions jd2 ON jd2.id = se.jobtype_id
+		LEFT JOIN schedule_criteria_definitions cd ON cd.id = swp.criteria_id
+		WHERE se.farm_id = $1
+		`
+	} else {
+		q = `
+		SELECT
+			se.id::text,
+			se.farm_id::text,
+			se.work_plan_id,
+			se.section_id::text,
+			se.execution_type,
+			se.scheduled_date,
+			se.status,
+			se.completed_at,
+			se.completed_by::text,
+			se.result_ref_type,
+			se.result_ref_id::text,
+			se.idempotency_key,
 			se.created_at,
 			se.updated_at,
 			swp.work_content,
@@ -70,7 +241,8 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 		LEFT JOIN schedule_jobtype_definitions jd ON jd.id = swp.jobtype_id
 		LEFT JOIN schedule_criteria_definitions cd ON cd.id = swp.criteria_id
 		WHERE se.farm_id = $1
-	`
+		`
+	}
 	args := []interface{}{farmID}
 	argNum := 2
 
@@ -150,10 +322,11 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 	for rows.Next() {
 		var (
 			item                                  farmScheduleExecutionItem
+			workPlanID                            sql.NullInt32
 			sectionID, completedBy, resultRefType sql.NullString
-			resultRefID, idempotencyKey, memo     sql.NullString
+			resultRefID, idempotencyKey          sql.NullString
 			workContent, sortationName            sql.NullString
-			jobtypeName, criteriaName             sql.NullString
+			jobtypeName, criteriaName            sql.NullString
 			completedAt                           sql.NullTime
 			scheduledDate                         time.Time
 			createdAt, updatedAt                  time.Time
@@ -161,7 +334,7 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 		if err := rows.Scan(
 			&item.ID,
 			&item.FarmID,
-			&item.WorkPlanID,
+			&workPlanID,
 			&sectionID,
 			&item.ExecutionType,
 			&scheduledDate,
@@ -171,7 +344,6 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 			&resultRefType,
 			&resultRefID,
 			&idempotencyKey,
-			&memo,
 			&createdAt,
 			&updatedAt,
 			&workContent,
@@ -185,6 +357,10 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 		item.ScheduledDate = scheduledDate.Format("2006-01-02")
 		item.CreatedAt = createdAt.Format(time.RFC3339)
 		item.UpdatedAt = updatedAt.Format(time.RFC3339)
+		if workPlanID.Valid {
+			v := int(workPlanID.Int32)
+			item.WorkPlanID = &v
+		}
 		if sectionID.Valid {
 			v := sectionID.String
 			item.SectionID = &v
@@ -208,10 +384,6 @@ func (h *Handler) FarmScheduleExecutionsList(w http.ResponseWriter, r *http.Requ
 		if idempotencyKey.Valid {
 			v := idempotencyKey.String
 			item.IdempotencyKey = &v
-		}
-		if memo.Valid {
-			v := memo.String
-			item.Memo = &v
 		}
 		if workContent.Valid {
 			v := workContent.String
@@ -245,15 +417,21 @@ func (h *Handler) FarmScheduleExecutionsCreate(w http.ResponseWriter, r *http.Re
 	var body struct {
 		WorkPlanID         *int    `json:"workPlanId"`
 		WorkPlanIDSnake    *int    `json:"work_plan_id"`
-		SectionID          *string `json:"sectionId"`
-		SectionIDSnake     *string `json:"section_id"`
-		ExecutionType      *string `json:"executionType"`
+		SortationID       *int    `json:"sortationId"`
+		SortationIDSnake   *int    `json:"sortation_id"`
+		JobtypeID         *int    `json:"jobtypeId"`
+		JobtypeIDSnake     *int    `json:"jobtype_id"`
+		WorkContent       *string `json:"workContent"`
+		WorkContentSnake   *string `json:"work_content"`
+		SectionID         *string `json:"sectionId"`
+		SectionIDSnake    *string `json:"section_id"`
+		ExecutionType     *string `json:"executionType"`
 		ExecutionTypeSnake *string `json:"execution_type"`
-		ScheduledDate      *string `json:"scheduledDate"`
+		ScheduledDate     *string `json:"scheduledDate"`
 		ScheduledDateSnake *string `json:"scheduled_date"`
-		IdempotencyKey     *string `json:"idempotencyKey"`
-		IdempotencyKeyAlt  *string `json:"idempotency_key"`
-		Memo               *string `json:"memo"`
+		IdempotencyKey    *string `json:"idempotencyKey"`
+		IdempotencyKeyAlt *string `json:"idempotency_key"`
+		Memo              *string `json:"memo"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 요청입니다."})
@@ -261,12 +439,30 @@ func (h *Handler) FarmScheduleExecutionsCreate(w http.ResponseWriter, r *http.Re
 	}
 
 	workPlanID := firstInt(body.WorkPlanID, body.WorkPlanIDSnake)
-	if workPlanID == nil || *workPlanID <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "workPlanId가 필요합니다."})
-		return
+	sortationID := firstInt(body.SortationID, body.SortationIDSnake)
+	jobtypeID := firstInt(body.JobtypeID, body.JobtypeIDSnake)
+	workContentStr := strings.TrimSpace(firstString(body.WorkContent, body.WorkContentSnake))
+
+	// 1회성: workPlanId 없이 sortationId, jobtypeId, workContent로 등록
+	oneOff := workPlanID == nil || *workPlanID <= 0
+	if oneOff {
+		if sortationID == nil || *sortationID <= 0 || jobtypeID == nil || *jobtypeID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "1회성 등록 시 sortationId, jobtypeId가 필요합니다."})
+			return
+		}
+		workPlanID = nil
+	} else {
+		// 기존: workPlanId 필수
+		if *workPlanID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "workPlanId가 필요합니다."})
+			return
+		}
 	}
 
 	executionType := strings.TrimSpace(firstString(body.ExecutionType, body.ExecutionTypeSnake))
+	if executionType == "" {
+		executionType = "inspection"
+	}
 	if !isValidScheduleExecutionType(executionType) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "executionType 값이 올바르지 않습니다."})
 		return
@@ -314,23 +510,25 @@ func (h *Handler) FarmScheduleExecutionsCreate(w http.ResponseWriter, r *http.Re
 		sectionIDValue = sectionID
 	}
 
-	var planExists bool
-	err = h.db.Pool.QueryRow(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM schedule_work_plans swp
-			WHERE swp.id = $1
-			  AND COALESCE(swp.is_deleted, false) = false
-			  AND (swp."farmId" IS NULL OR swp."farmId" = $2)
-		)
-	`, *workPlanID, farmID).Scan(&planExists)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workPlan 검증 중 오류가 발생했습니다.", "detail": err.Error()})
-		return
-	}
-	if !planExists {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "workPlanId가 유효하지 않습니다."})
-		return
+	if !oneOff {
+		var planExists bool
+		err = h.db.Pool.QueryRow(r.Context(), `
+			SELECT EXISTS (
+				SELECT 1
+				FROM schedule_work_plans swp
+				WHERE swp.id = $1
+				  AND COALESCE(swp.is_deleted, false) = false
+				  AND (swp."farmId" IS NULL OR swp."farmId" = $2)
+			)
+		`, *workPlanID, farmID).Scan(&planExists)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workPlan 검증 중 오류가 발생했습니다.", "detail": err.Error()})
+			return
+		}
+		if !planExists {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "workPlanId가 유효하지 않습니다."})
+			return
+		}
 	}
 
 	var idempotencyKey interface{}
@@ -339,21 +537,32 @@ func (h *Handler) FarmScheduleExecutionsCreate(w http.ResponseWriter, r *http.Re
 		idempotencyKey = idempotencyKeyStr
 	}
 
-	var memo interface{}
-	if body.Memo != nil {
-		memo = *body.Memo
-	}
-
 	executionID := uuid.New()
 	var createdAt, updatedAt time.Time
-	err = h.db.Pool.QueryRow(r.Context(), `
-		INSERT INTO schedule_executions (
-			id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status,
-			idempotency_key, memo, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, NOW(), NOW())
-		RETURNING created_at, updated_at
-	`, executionID, farmID, *workPlanID, sectionIDValue, executionType, scheduledDate, idempotencyKey, memo).Scan(&createdAt, &updatedAt)
+	if oneOff {
+		var workContentVal interface{}
+		if workContentStr != "" {
+			workContentVal = workContentStr
+		}
+		err = h.db.Pool.QueryRow(r.Context(), `
+			INSERT INTO schedule_executions (
+				id, farm_id, work_plan_id, sortation_id, jobtype_id, work_content,
+				section_id, execution_type, scheduled_date, status,
+				idempotency_key, created_at, updated_at
+			)
+			VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, 'pending', $9, NOW(), NOW())
+			RETURNING created_at, updated_at
+		`, executionID, farmID, *sortationID, *jobtypeID, workContentVal, sectionIDValue, executionType, scheduledDate, idempotencyKey).Scan(&createdAt, &updatedAt)
+	} else {
+		err = h.db.Pool.QueryRow(r.Context(), `
+			INSERT INTO schedule_executions (
+				id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status,
+				idempotency_key, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NOW(), NOW())
+			RETURNING created_at, updated_at
+		`, executionID, farmID, *workPlanID, sectionIDValue, executionType, scheduledDate, idempotencyKey).Scan(&createdAt, &updatedAt)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_schedule_executions_idempotency") || strings.Contains(err.Error(), "duplicate key value") {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "중복 요청입니다. idempotencyKey를 확인해 주세요."})
@@ -363,20 +572,28 @@ func (h *Handler) FarmScheduleExecutionsCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":             executionID.String(),
 		"farmId":         farmID.String(),
-		"workPlanId":     *workPlanID,
 		"sectionId":      nullableStringOrNil(sectionIDStr),
 		"executionType":  executionType,
 		"scheduledDate":  scheduledDate.Format("2006-01-02"),
 		"status":         "pending",
 		"idempotencyKey": nullableStringOrNil(idempotencyKeyStr),
-		"memo":           body.Memo,
 		"createdAt":      createdAt.Format(time.RFC3339),
 		"updatedAt":      updatedAt.Format(time.RFC3339),
 		"createdBy":      claims.UserID,
-	})
+	}
+	if !oneOff {
+		resp["workPlanId"] = *workPlanID
+	} else {
+		resp["sortationId"] = *sortationID
+		resp["jobtypeId"] = *jobtypeID
+		if workContentStr != "" {
+			resp["workContent"] = workContentStr
+		}
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func isValidScheduleExecutionStatus(v string) bool {
@@ -386,6 +603,51 @@ func isValidScheduleExecutionStatus(v string) bool {
 	default:
 		return false
 	}
+}
+
+// FarmScheduleExecutionDelete DELETE /api/farms/:farmId/schedule-executions/:executionId
+func (h *Handler) FarmScheduleExecutionDelete(w http.ResponseWriter, r *http.Request) {
+	farmID, _, ok := h.parseFarmIDAndAuth(w, r)
+	if !ok {
+		return
+	}
+	executionID, err := uuid.Parse(strings.TrimSpace(chi.URLParam(r, "executionId")))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "executionId가 올바르지 않습니다."})
+		return
+	}
+
+	var status string
+	err = h.db.Pool.QueryRow(r.Context(), `
+		SELECT status FROM schedule_executions
+		WHERE id = $1 AND farm_id = $2
+	`, executionID, farmID).Scan(&status)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "해당 예정을 찾을 수 없습니다."})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "조회 실패: " + err.Error()})
+		return
+	}
+	if status != "pending" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "대기 중인 예정만 삭제할 수 있습니다."})
+		return
+	}
+
+	cmd, err := h.db.Pool.Exec(r.Context(), `
+		DELETE FROM schedule_executions
+		WHERE id = $1 AND farm_id = $2 AND status = 'pending'
+	`, executionID, farmID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "삭제 실패: " + err.Error()})
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "해당 예정을 찾을 수 없습니다."})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": true})
 }
 
 func isValidScheduleExecutionType(v string) bool {
@@ -473,7 +735,7 @@ func (h *Handler) FarmScheduleExecutionCompleteBirth(w http.ResponseWriter, r *h
 	defer tx.Rollback(r.Context())
 
 	type lockedExecution struct {
-		WorkPlanID     int
+		WorkPlanID     sql.NullInt32
 		SectionID      sql.NullString
 		ExecutionType  string
 		Status         string
@@ -695,6 +957,13 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 		return
 	}
 
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "트랜잭션 시작 실패"})
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	type parsedLine struct {
 		SourceGroupID uuid.UUID
 		TargetGroupID *uuid.UUID
@@ -706,11 +975,6 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 	parsedLines := make([]parsedLine, 0, len(body.Lines))
 	groupOutTotal := map[uuid.UUID]int32{}
 	for i, line := range body.Lines {
-		sourceGroupID, err := uuid.Parse(strings.TrimSpace(line.SourceGroupID))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
-			return
-		}
 		toSectionID, err := uuid.Parse(strings.TrimSpace(line.ToSectionID))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "toSectionId가 올바르지 않습니다.", "lineIndex": intToString(i)})
@@ -729,16 +993,6 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 			return
 		}
 
-		var targetGroupID *uuid.UUID
-		if line.TargetGroupID != nil && strings.TrimSpace(*line.TargetGroupID) != "" {
-			tid, err := uuid.Parse(strings.TrimSpace(*line.TargetGroupID))
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
-				return
-			}
-			targetGroupID = &tid
-		}
-
 		var fromSectionID *uuid.UUID
 		if line.FromSectionID != nil && strings.TrimSpace(*line.FromSectionID) != "" {
 			fid, err := uuid.Parse(strings.TrimSpace(*line.FromSectionID))
@@ -747,6 +1001,54 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 				return
 			}
 			fromSectionID = &fid
+		}
+
+		var sourceGroupID uuid.UUID
+		if strings.TrimSpace(line.SourceGroupID) != "" {
+			sourceGroupID, err = uuid.Parse(strings.TrimSpace(line.SourceGroupID))
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
+				return
+			}
+		} else {
+			if fromSectionID == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fromSectionId가 필요합니다.", "lineIndex": intToString(i)})
+				return
+			}
+			sourceGroupID, err = resolveSourceGroupIDFromSectionTx(r.Context(), tx, farmID, *fromSectionID)
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "출발 칸에 유일한 돈군이 없습니다. fromSectionId를 확인하세요.", "lineIndex": intToString(i)})
+					return
+				}
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "출발 칸 돈군 조회 실패.", "detail": err.Error()})
+				return
+			}
+		}
+
+		var targetGroupID *uuid.UUID
+		if line.TargetGroupID != nil && strings.TrimSpace(*line.TargetGroupID) != "" {
+			tid, err := uuid.Parse(strings.TrimSpace(*line.TargetGroupID))
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
+				return
+			}
+			targetGroupID = &tid
+		} else {
+			targetGroupID, err = resolveTargetGroupIDFromSectionTx(r.Context(), tx, farmID, toSectionID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "도착 칸 돈군 조회 실패.", "detail": err.Error()})
+				return
+			}
+		}
+
+		if fromSectionID == nil {
+			var sid uuid.UUID
+			if err := tx.QueryRow(r.Context(), `SELECT current_section_id FROM pig_groups WHERE id = $1 AND farm_id = $2`, sourceGroupID, farmID).Scan(&sid); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "출발 칸(fromSectionId)을 확정할 수 없습니다.", "lineIndex": intToString(i)})
+				return
+			}
+			fromSectionID = &sid
 		}
 
 		parsedLines = append(parsedLines, parsedLine{
@@ -760,15 +1062,8 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 		groupOutTotal[sourceGroupID] += line.HeadCount
 	}
 
-	tx, err := h.db.Pool.Begin(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "트랜잭션 시작 실패"})
-		return
-	}
-	defer tx.Rollback(r.Context())
-
 	type lockedExecution struct {
-		WorkPlanID     int
+		WorkPlanID     sql.NullInt32
 		ExecutionType  string
 		Status         string
 		IdempotencyKey sql.NullString
@@ -866,10 +1161,14 @@ func (h *Handler) FarmScheduleExecutionCompleteMove(w http.ResponseWriter, r *ht
 
 	eventID := uuid.New()
 	movedAt := time.Now()
+	var scheduledWorkPlanID interface{}
+	if exec.WorkPlanID.Valid {
+		scheduledWorkPlanID = int(exec.WorkPlanID.Int32)
+	}
 	_, err = tx.Exec(r.Context(), `
 		INSERT INTO pig_movement_events (id, farm_id, event_type, scheduled_work_plan_id, moved_at, moved_by, memo, idempotency_key, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-	`, eventID, farmID, body.EventType, exec.WorkPlanID, movedAt, actorID, body.Memo, idempotencyKey)
+	`, eventID, farmID, body.EventType, scheduledWorkPlanID, movedAt, actorID, body.Memo, idempotencyKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_pig_movement_events_idempotency") || strings.Contains(err.Error(), "duplicate key value") {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "중복 요청입니다. idempotencyKey를 확인해 주세요."})
@@ -1147,10 +1446,10 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteBirth(w http.ResponseWrite
 	_, err = tx.Exec(r.Context(), `
 		INSERT INTO schedule_executions (
 			id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status,
-			idempotency_key, memo, created_at, updated_at
+			idempotency_key, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'birth', $5, 'pending', $6, $7, NOW(), NOW())
-	`, executionID, farmID, *workPlanID, sectionID, scheduledDate, idempotencyKey, body.Memo)
+		VALUES ($1, $2, $3, $4, 'birth', $5, 'pending', $6, NOW(), NOW())
+	`, executionID, farmID, *workPlanID, sectionID, scheduledDate, idempotencyKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_schedule_executions_idempotency") || strings.Contains(err.Error(), "duplicate key value") {
 			existingID, existingType, existingStatus, existingRefType, existingRefID, lookupErr := h.lookupScheduleExecutionByIdempotency(r.Context(), farmID, idempotencyKey)
@@ -1335,6 +1634,13 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 		return
 	}
 
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "트랜잭션 시작 실패"})
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	type parsedLine struct {
 		SourceGroupID uuid.UUID
 		TargetGroupID *uuid.UUID
@@ -1346,11 +1652,6 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 	parsedLines := make([]parsedLine, 0, len(body.Lines))
 	groupOutTotal := map[uuid.UUID]int32{}
 	for i, line := range body.Lines {
-		sourceGroupID, err := uuid.Parse(strings.TrimSpace(line.SourceGroupID))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
-			return
-		}
 		toSectionID, err := uuid.Parse(strings.TrimSpace(line.ToSectionID))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "toSectionId가 올바르지 않습니다.", "lineIndex": intToString(i)})
@@ -1369,15 +1670,6 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 			return
 		}
 
-		var targetGroupID *uuid.UUID
-		if line.TargetGroupID != nil && strings.TrimSpace(*line.TargetGroupID) != "" {
-			tid, err := uuid.Parse(strings.TrimSpace(*line.TargetGroupID))
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
-				return
-			}
-			targetGroupID = &tid
-		}
 		var fromSectionID *uuid.UUID
 		if line.FromSectionID != nil && strings.TrimSpace(*line.FromSectionID) != "" {
 			fid, err := uuid.Parse(strings.TrimSpace(*line.FromSectionID))
@@ -1386,6 +1678,54 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 				return
 			}
 			fromSectionID = &fid
+		}
+
+		var sourceGroupID uuid.UUID
+		if strings.TrimSpace(line.SourceGroupID) != "" {
+			sourceGroupID, err = uuid.Parse(strings.TrimSpace(line.SourceGroupID))
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
+				return
+			}
+		} else {
+			if fromSectionID == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fromSectionId가 필요합니다.", "lineIndex": intToString(i)})
+				return
+			}
+			sourceGroupID, err = resolveSourceGroupIDFromSectionTx(r.Context(), tx, farmID, *fromSectionID)
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "출발 칸에 유일한 돈군이 없습니다. fromSectionId를 확인하세요.", "lineIndex": intToString(i)})
+					return
+				}
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "출발 칸 돈군 조회 실패.", "detail": err.Error()})
+				return
+			}
+		}
+
+		var targetGroupID *uuid.UUID
+		if line.TargetGroupID != nil && strings.TrimSpace(*line.TargetGroupID) != "" {
+			tid, err := uuid.Parse(strings.TrimSpace(*line.TargetGroupID))
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "targetGroupId가 올바르지 않습니다.", "lineIndex": intToString(i)})
+				return
+			}
+			targetGroupID = &tid
+		} else {
+			targetGroupID, err = resolveTargetGroupIDFromSectionTx(r.Context(), tx, farmID, toSectionID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "도착 칸 돈군 조회 실패.", "detail": err.Error()})
+				return
+			}
+		}
+
+		if fromSectionID == nil {
+			var sid uuid.UUID
+			if err := tx.QueryRow(r.Context(), `SELECT current_section_id FROM pig_groups WHERE id = $1 AND farm_id = $2`, sourceGroupID, farmID).Scan(&sid); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "출발 칸(fromSectionId)을 확정할 수 없습니다.", "lineIndex": intToString(i)})
+				return
+			}
+			fromSectionID = &sid
 		}
 
 		parsedLines = append(parsedLines, parsedLine{
@@ -1398,13 +1738,6 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 		})
 		groupOutTotal[sourceGroupID] += line.HeadCount
 	}
-
-	tx, err := h.db.Pool.Begin(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "트랜잭션 시작 실패"})
-		return
-	}
-	defer tx.Rollback(r.Context())
 
 	var planExists bool
 	err = tx.QueryRow(r.Context(), `
@@ -1433,10 +1766,10 @@ func (h *Handler) FarmScheduleExecutionsDirectCompleteMove(w http.ResponseWriter
 	_, err = tx.Exec(r.Context(), `
 		INSERT INTO schedule_executions (
 			id, farm_id, work_plan_id, section_id, execution_type, scheduled_date, status,
-			idempotency_key, memo, created_at, updated_at
+			idempotency_key, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, 'move', $5, 'pending', $6, $7, NOW(), NOW())
-	`, executionID, farmID, *workPlanID, executionSectionID, scheduledDate, idempotencyKey, body.Memo)
+		VALUES ($1, $2, $3, $4, 'move', $5, 'pending', $6, NOW(), NOW())
+	`, executionID, farmID, *workPlanID, executionSectionID, scheduledDate, idempotencyKey)
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_schedule_executions_idempotency") || strings.Contains(err.Error(), "duplicate key value") {
 			existingID, existingType, existingStatus, existingRefType, existingRefID, lookupErr := h.lookupScheduleExecutionByIdempotency(r.Context(), farmID, idempotencyKey)
@@ -1721,6 +2054,62 @@ func ensureSectionBelongsToFarmTx(ctx context.Context, tx pgx.Tx, farmID uuid.UU
 		)
 	`, sectionID, farmID).Scan(&exists)
 	return exists, err
+}
+
+// resolveSourceGroupIDFromSectionTx returns the single active pig group id in the given section.
+// Policy: one section has one active group; returns error if 0 or more than 1.
+func resolveSourceGroupIDFromSectionTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) (uuid.UUID, error) {
+	var count int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM pig_groups
+		WHERE farm_id = $1
+		  AND current_section_id = $2
+		  AND COALESCE(is_deleted, false) = false
+		  AND LOWER(COALESCE(status, '')) = 'active'
+	`, farmID, sectionID).Scan(&count); err != nil {
+		return uuid.Nil, err
+	}
+	if count != 1 {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM pig_groups
+		WHERE farm_id = $1
+		  AND current_section_id = $2
+		  AND COALESCE(is_deleted, false) = false
+		  AND LOWER(COALESCE(status, '')) = 'active'
+		ORDER BY head_count DESC, created_at ASC
+		LIMIT 1
+	`, farmID, sectionID).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+// resolveTargetGroupIDFromSectionTx returns the best target pig group in the section for merge.
+// Policy: 마리수 많은 돈군 우선, 동수면 created_at 이른 쪽. 없으면 nil (신규 생성).
+func resolveTargetGroupIDFromSectionTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID) (*uuid.UUID, error) {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM pig_groups
+		WHERE farm_id = $1
+		  AND current_section_id = $2
+		  AND COALESCE(is_deleted, false) = false
+		  AND LOWER(COALESCE(status, '')) = 'active'
+		ORDER BY head_count DESC, created_at ASC
+		LIMIT 1
+	`, farmID, sectionID).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &id, nil
 }
 
 func upsertSectionBalanceTx(ctx context.Context, tx pgx.Tx, farmID uuid.UUID, sectionID uuid.UUID, delta int32) error {

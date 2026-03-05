@@ -512,20 +512,30 @@ export default function AdminScheduleWorkPlansPage() {
         setLoading(false);
         return;
       }
+      setLoading(true);
       getFarmStructureProduction(farmId)
         .then((list) => {
-          const arr = (Array.isArray(list) ? list : []).map((x, idx) => ({
-            id: x.templateId,
-            name: x.name,
-            category: 'production',
-            weight: x.weight,
-            optimalDensity: x.optimalDensity,
-            description: x.description,
-            sortOrder: idx,
-          }));
+          const raw = Array.isArray(list) ? list : [];
+          const arr = raw.map((x: { templateId?: number; template_id?: number; name?: string | null; weight?: string; optimalDensity?: number; description?: string }, idx: number) => {
+            const rawId = x.templateId ?? (x as { template_id?: number }).template_id;
+            const id = typeof rawId === 'number' && Number.isFinite(rawId) ? rawId : Number(rawId);
+            const name = (x.name != null && x.name !== '') ? String(x.name).trim() : (Number.isFinite(id) ? `시설 ID ${id}` : '');
+            return {
+              id,
+              name: name || '—',
+              category: 'production' as const,
+              weight: x.weight,
+              optimalDensity: x.optimalDensity,
+              description: x.description,
+              sortOrder: idx,
+            };
+          }).filter((f) => Number.isFinite(f.id) && f.id > 0);
           setFacilities(arr);
         })
-        .catch((e) => setError(e instanceof Error ? e.message : '시설 목록 조회 실패'))
+        .catch((e) => {
+          setError(e instanceof Error ? e.message : '시설 목록 조회 실패');
+          setFacilities([]);
+        })
         .finally(() => setLoading(false));
       return;
     }
@@ -1625,7 +1635,9 @@ export default function AdminScheduleWorkPlansPage() {
           </div>
           <div style={{ padding: 12, minHeight: listItemMinHeight }}>
             {facilitiesByCategory.length === 0 ? (
-              <div style={{ ...listItemStyle, color: '#64748b' }}>해당 구분의 시설이 없습니다.</div>
+              <div style={{ ...listItemStyle, color: '#64748b' }}>
+                {isFarmMode && !loading ? '선택된 농장에 등록된 사육시설이 없습니다. 환경 설정 → 농장 정보에서 사육시설을 선택·저장한 뒤 다시 시도하세요.' : '해당 구분의 시설이 없습니다.'}
+              </div>
             ) : selectedFacilityId != null ? (
               <label style={{ ...listItemStyle, borderBottom: '1px solid #e5e7eb' }}>
                 <input type="checkbox" checked onChange={clearFacility} style={{ width: 16, height: 16, cursor: 'pointer' }} />

@@ -17,14 +17,16 @@ func (h *Handler) FarmScheduleWorkPlansMasterList(w http.ResponseWriter, r *http
 	}
 	rows, err := h.db.Pool.Query(r.Context(), `
 		SELECT swp.id, swp.structure_template_id, swp.sortation_id, swp.jobtype_id, swp.criteria_id,
-		       swp.criteria_content::text, swp.work_content, COALESCE(swp.sort_order, 999999),
-		       swp."createdAt", swp."updatedAt",
+		       swp.criteria_content::text, swp.work_content, swp.target_structure_template_id,
+		       COALESCE(swp.sort_order, 999999), swp."createdAt", swp."updatedAt",
 		       st.name AS structure_template_name,
 		       sd.name AS sortation_name,
 		       jd.name AS jobtype_name,
-		       cd.name AS criteria_name
+		       cd.name AS criteria_name,
+		       st_target.name AS target_structure_template_name
 		FROM schedule_work_plans swp
 		LEFT JOIN structure_templates st ON st.id = swp.structure_template_id
+		LEFT JOIN structure_templates st_target ON st_target.id = swp.target_structure_template_id
 		LEFT JOIN schedule_sortation_definitions sd ON sd.id = swp.sortation_id
 		LEFT JOIN schedule_jobtype_definitions jd ON jd.id = swp.jobtype_id
 		LEFT JOIN schedule_criteria_definitions cd ON cd.id = swp.criteria_id
@@ -48,31 +50,34 @@ func (h *Handler) FarmScheduleWorkPlansMasterList(w http.ResponseWriter, r *http
 	var list []map[string]interface{}
 	for rows.Next() {
 		var id int
-		var structTplID, sortID, jobtypeID, criteriaID *int
+		var structTplID, sortID, jobtypeID, criteriaID, targetStructTplID *int
 		var criteriaContentStr *string
 		var workContent *string
 		var sortOrder int
 		var createdAt, updatedAt time.Time
 		var structTplName *string
 		var sortationName, jobtypeName, criteriaName *string
-		if err := rows.Scan(&id, &structTplID, &sortID, &jobtypeID, &criteriaID, &criteriaContentStr, &workContent, &sortOrder, &createdAt, &updatedAt,
-			&structTplName, &sortationName, &jobtypeName, &criteriaName); err != nil {
+		var targetStructTplName *string
+		if err := rows.Scan(&id, &structTplID, &sortID, &jobtypeID, &criteriaID, &criteriaContentStr, &workContent, &targetStructTplID, &sortOrder, &createdAt, &updatedAt,
+			&structTplName, &sortationName, &jobtypeName, &criteriaName, &targetStructTplName); err != nil {
 			continue
 		}
 		plan := map[string]interface{}{
-			"id":                   id,
-			"structureTemplateId":  structTplID,
-			"sortationId":          sortID,
-			"jobtypeId":            jobtypeID,
-			"criteriaId":           criteriaID,
-			"criteriaContent":      ParseJSONBFromText(criteriaContentStr),
-			"workContent":          strPtrToInterface(workContent),
-			"createdAt":            createdAt.Format(time.RFC3339),
-			"updatedAt":            updatedAt.Format(time.RFC3339),
-			"structureTemplateName": strPtrToInterface(structTplName),
-			"sortationName":        strPtrToInterface(sortationName),
-			"jobtypeName":          strPtrToInterface(jobtypeName),
-			"criteriaName":         strPtrToInterface(criteriaName),
+			"id":                           id,
+			"structureTemplateId":          structTplID,
+			"sortationId":                  sortID,
+			"jobtypeId":                   jobtypeID,
+			"criteriaId":                  criteriaID,
+			"criteriaContent":              ParseJSONBFromText(criteriaContentStr),
+			"workContent":                  strPtrToInterface(workContent),
+			"targetStructureTemplateId":    targetStructTplID,
+			"targetStructureTemplateName":  strPtrToInterface(targetStructTplName),
+			"createdAt":                    createdAt.Format(time.RFC3339),
+			"updatedAt":                    updatedAt.Format(time.RFC3339),
+			"structureTemplateName":        strPtrToInterface(structTplName),
+			"sortationName":                strPtrToInterface(sortationName),
+			"jobtypeName":                  strPtrToInterface(jobtypeName),
+			"criteriaName":                strPtrToInterface(criteriaName),
 		}
 		list = append(list, plan)
 	}
@@ -86,12 +91,13 @@ func (h *Handler) FarmScheduleWorkPlansMasterCreate(w http.ResponseWriter, r *ht
 		return
 	}
 	var body struct {
-		StructureTemplateID *int         `json:"structure_template_id"`
-		SortationID         *int         `json:"sortation_id"`
-		JobtypeID           *int         `json:"jobtype_id"`
-		CriteriaID          *int         `json:"criteria_id"`
-		CriteriaContent     *interface{} `json:"criteria_content"`
-		WorkContent         *string      `json:"work_content"`
+		StructureTemplateID       *int         `json:"structure_template_id"`
+		SortationID               *int         `json:"sortation_id"`
+		JobtypeID                 *int         `json:"jobtype_id"`
+		CriteriaID                *int         `json:"criteria_id"`
+		CriteriaContent           *interface{} `json:"criteria_content"`
+		WorkContent               *string      `json:"work_content"`
+		TargetStructureTemplateID *int         `json:"target_structure_template_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 요청입니다."})
@@ -106,10 +112,10 @@ func (h *Handler) FarmScheduleWorkPlansMasterCreate(w http.ResponseWriter, r *ht
 	_ = h.db.Pool.QueryRow(r.Context(), `SELECT COALESCE(MIN(sort_order), 0) - 1 FROM schedule_work_plans WHERE ("farmId" = $1) AND COALESCE(is_deleted, false) = false`, farmID).Scan(&nextOrder)
 	var id int
 	err := h.db.Pool.QueryRow(r.Context(), `
-		INSERT INTO schedule_work_plans ("farmId", structure_template_id, sortation_id, jobtype_id, criteria_id, criteria_content, work_content, sort_order, is_deleted, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, NOW(), NOW())
+		INSERT INTO schedule_work_plans ("farmId", structure_template_id, sortation_id, jobtype_id, criteria_id, criteria_content, work_content, target_structure_template_id, sort_order, is_deleted, "createdAt", "updatedAt")
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, NOW(), NOW())
 		RETURNING id
-	`, farmID, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, nextOrder).Scan(&id)
+	`, farmID, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, body.TargetStructureTemplateID, nextOrder).Scan(&id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기초 일정 추가 중 오류가 발생했습니다.", "detail": err.Error()})
 		return
@@ -130,12 +136,13 @@ func (h *Handler) FarmScheduleWorkPlansMasterUpdate(w http.ResponseWriter, r *ht
 		return
 	}
 	var body struct {
-		StructureTemplateID *int         `json:"structure_template_id"`
-		SortationID         *int         `json:"sortation_id"`
-		JobtypeID           *int         `json:"jobtype_id"`
-		CriteriaID          *int         `json:"criteria_id"`
-		CriteriaContent     *interface{} `json:"criteria_content"`
-		WorkContent         *string      `json:"work_content"`
+		StructureTemplateID       *int         `json:"structure_template_id"`
+		SortationID               *int         `json:"sortation_id"`
+		JobtypeID                 *int         `json:"jobtype_id"`
+		CriteriaID                *int         `json:"criteria_id"`
+		CriteriaContent           *interface{} `json:"criteria_content"`
+		WorkContent               *string      `json:"work_content"`
+		TargetStructureTemplateID *int         `json:"target_structure_template_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "잘못된 요청입니다."})
@@ -149,9 +156,9 @@ func (h *Handler) FarmScheduleWorkPlansMasterUpdate(w http.ResponseWriter, r *ht
 	_, err = h.db.Pool.Exec(r.Context(), `
 		UPDATE schedule_work_plans
 		SET structure_template_id = $1, sortation_id = $2, jobtype_id = $3, criteria_id = $4,
-		    criteria_content = $5, work_content = $6, "updatedAt" = NOW()
-		WHERE id = $7 AND "farmId" = $8 AND COALESCE(is_deleted, false) = false
-	`, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, id, farmID)
+		    criteria_content = $5, work_content = $6, target_structure_template_id = $7, "updatedAt" = NOW()
+		WHERE id = $8 AND "farmId" = $9 AND COALESCE(is_deleted, false) = false
+	`, body.StructureTemplateID, body.SortationID, body.JobtypeID, body.CriteriaID, criteriaContentJSON, body.WorkContent, body.TargetStructureTemplateID, id, farmID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "기초 일정 수정 중 오류가 발생했습니다."})
 		return

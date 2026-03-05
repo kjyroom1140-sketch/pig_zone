@@ -30,9 +30,12 @@ func (h *Handler) FarmStructureProductionList(w http.ResponseWriter, r *http.Req
 		return
 	}
 	rows, err := h.db.Pool.Query(r.Context(), `
-		SELECT id::text, "templateId", name, weight, "optimalDensity", description
-		FROM farm_structure WHERE "farmId" = $1 AND LOWER(category::text) = 'production'
-		ORDER BY id ASC
+		SELECT fs.id::text, fs."templateId", fs.name, fs.weight, fs."optimalDensity", fs.description
+		FROM farm_structure fs
+		LEFT JOIN structure_templates st ON st.id = fs."templateId"
+		WHERE fs."farmId" = $1
+		  AND fs.category::text = 'production'
+		ORDER BY fs.id ASC
 	`, farmID)
 	if err != nil {
 		log.Printf("[farm_structure] GET production list error: %v", err)
@@ -50,7 +53,7 @@ func (h *Handler) FarmStructureProductionList(w http.ResponseWriter, r *http.Req
 	type item struct {
 		ID             string   `json:"id"`
 		TemplateID     int      `json:"templateId"`
-		Name           string   `json:"name"`
+		Name           *string  `json:"name"`
 		Weight         *string  `json:"weight"`
 		OptimalDensity *float64 `json:"optimalDensity"`
 		Description    *string  `json:"description"`
@@ -103,14 +106,14 @@ func (h *Handler) FarmStructureProductionSave(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `DELETE FROM farm_structure WHERE "farmId" = $1 AND LOWER(category::text) = 'production'`, farmID)
+	_, err = tx.Exec(r.Context(), `DELETE FROM farm_structure WHERE "farmId" = $1 AND category::text = 'production'`, farmID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "농장 구조 저장 중 오류가 발생했습니다."})
 		return
 	}
 	if len(body.TemplateIDs) > 0 {
 		rows, err := tx.Query(r.Context(), `
-			SELECT id, name, category, weight, "optimalDensity", description FROM structure_templates WHERE id = ANY($1::int[]) AND LOWER(category::text) = 'production'
+			SELECT id, name, category, weight, "optimalDensity", description FROM structure_templates WHERE id = ANY($1::int[]) AND category::text = 'production'
 		`, body.TemplateIDs)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "농장 구조 저장 중 오류가 발생했습니다."})
@@ -141,7 +144,22 @@ func (h *Handler) FarmStructureProductionSave(w http.ResponseWriter, r *http.Req
 			templates = append(templates, t)
 		}
 		rows.Close()
+		templateByID := make(map[int]struct {
+			ID             int
+			Name           string
+			Category       string
+			Weight         *string
+			OptimalDensity *float64
+			Description    *string
+		})
 		for _, t := range templates {
+			templateByID[t.ID] = t
+		}
+		for _, tid := range body.TemplateIDs {
+			t, ok := templateByID[tid]
+			if !ok {
+				continue
+			}
 			_, err = tx.Exec(r.Context(), `
 				INSERT INTO farm_structure ("farmId", "templateId", category, name, weight, "optimalDensity", description, "createdAt", "updatedAt")
 				VALUES ($1, $2, 'production', $3, $4, $5, $6, NOW(), NOW())

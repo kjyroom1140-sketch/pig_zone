@@ -23,7 +23,13 @@ export default function DashboardLayout({
   }, [router]);
 
   if (!ready) return <div style={{ padding: 24 }}>로딩 중...</div>;
-  if (!user) return null;
+  if (!user) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>
+        로그인 페이지로 이동 중...
+      </div>
+    );
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f8fafc', minHeight: 0, overflow: 'hidden' }}>

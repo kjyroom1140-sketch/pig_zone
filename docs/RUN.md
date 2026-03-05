@@ -86,6 +86,33 @@ npm run dev   # 포트 3000 (package.json scripts 확인)
    ```
    여기서 나오는 빨간 오류 메시지를 그대로 확인하면 원인 파악에 도움이 됩니다.
 
+## 4-2. 일정 관련 마이그레이션
+
+**1회성 등록** (날짜 선택 후 구분·작업유형·작업내용으로 등록):
+```bash
+psql -h <host> -U <user> -d <db> -f scripts/schedule_executions_add_oneoff_columns.sql
+```
+
+**memo 컬럼 제거** (예정 작업 입력 모달에서 메모 제거 반영):
+```bash
+psql -h <host> -U <user> -d <db> -f scripts/schedule_executions_drop_memo.sql
+```
+
+**사육시설 순서** (농장 구조 설정 – 사육시설 선택 체크박스용, `farm_structure`):
+```bash
+psql -h <host> -U <user> -d <db> -f scripts/farm_structure_add_sort_order.sql
+```
+
+**건물 내 시설 순서** (농장 구조 설정 – 수정 시 위/아래 화살표로 돈사 순서 변경 후 저장/새로고침 시 유지):
+```bash
+psql -h <host> -U <user> -d <db> -f scripts/farm_barns_add_sort_order.sql
+```
+※ 이 스크립트를 적용하지 않으면 화살표로 순서를 바꿔도 새로고침 시 원래 순서로 돌아갑니다.
+
+또는 DB 클라이언트에서 각 SQL 파일 내용을 실행합니다.
+
+---
+
 ## 5. 농장 정보 API 확인 (farms 테이블)
 
 농장 정보는 **farms** 테이블에서 조회됩니다.

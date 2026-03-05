@@ -71,11 +71,6 @@ export default function TopHeader() {
       setCurrentFarmName(name);
       return;
     }
-    // 환경 설정 페이지에서 중복 호출을 막기 위해 농장명 자동 조회를 건너뜀
-    if (pathname?.startsWith('/farm/admin')) {
-      setCurrentFarmName(null);
-      return;
-    }
     if (farmId) {
       getFarm(farmId)
         .then((f) => {
@@ -344,7 +339,6 @@ export default function TopHeader() {
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => !profileSubmitting && setProfileModalOpen(false)}
         >
           <div
             style={{
@@ -355,7 +349,6 @@ export default function TopHeader() {
               maxWidth: 400,
               boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ marginTop: 0, marginBottom: 20 }}>개인정보 수정</h3>
             <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>사용자명: {user.username}</p>
